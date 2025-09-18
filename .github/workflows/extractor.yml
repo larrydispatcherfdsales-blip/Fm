@@ -1,8 +1,5 @@
 name: FMCSA Extractor (Single Batch)
 
-permissions:
-  contents: write   # ✅ allow pushing merged file to repo
-
 on:
   workflow_dispatch:
     inputs:
@@ -63,54 +60,3 @@ jobs:
           path: output/*.csv
           if-no-files-found: ignore
           retention-days: 7
-
-      # 🔹 Python setup
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Install dependencies
-        run: pip install pandas
-
-      - name: Merge all CSVs & Remove Duplicates
-        run: |
-          python - <<'EOF'
-          import os, glob, pandas as pd
-          os.makedirs("outbox", exist_ok=True)
-
-          # collect all CSVs (new run + previously merged one)
-          csv_files = glob.glob("output/*.csv") + glob.glob("outbox/*.csv")
-          merged_rows = []
-
-          for file in csv_files:
-              try:
-                  df = pd.read_csv(file)
-                  merged_rows.append(df)
-              except Exception as e:
-                  print(f"❌ Failed to read {file}: {e}")
-
-          if merged_rows:
-              final_df = pd.concat(merged_rows, ignore_index=True)
-              final_df.drop_duplicates(inplace=True)
-              output_file = "outbox/merged_fmcsa.csv"
-              final_df.to_csv(output_file, index=False)
-              print(f"✅ Final merged CSV created with {len(final_df)} rows")
-          else:
-              print("⚠ No CSV files found for merging.")
-          EOF
-
-      - name: Commit & Push merged file
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add outbox/merged_fmcsa.csv
-          git commit -m "Auto-merged FMCSA CSVs (batch ${{ github.event.inputs.batch_index }})" || echo "No changes to commit"
-
-          # ✅ ensure repo is up to date before pushing
-          git pull --rebase https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git main
-
-          # ✅ push merged file
-          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git HEAD:main
