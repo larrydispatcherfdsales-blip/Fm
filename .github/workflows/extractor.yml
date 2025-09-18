@@ -61,21 +61,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # 🔹 NEW PART: Merge and commit to repo
+      # 🔹 Python setup
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         run: pip install pandas
 
       - name: Merge all CSVs & Remove Duplicates
         run: |
+          python - <<'EOF'
           import os, glob, pandas as pd
           os.makedirs("outbox", exist_ok=True)
 
-          # find all CSVs inside repo (past runs saved in repo + new run)
+          # collect all CSVs (from this run + previously merged one)
           csv_files = glob.glob("output/*.csv") + glob.glob("outbox/*.csv")
           merged_rows = []
 
@@ -94,6 +95,7 @@ jobs:
               print(f"✅ Final merged CSV created with {len(final_df)} rows")
           else:
               print("⚠ No CSV files found for merging.")
+          EOF
 
       - name: Commit & Push merged file
         run: |
