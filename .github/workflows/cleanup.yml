@@ -13,22 +13,38 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Authenticate with GitHub CLI
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
-
       - name: Delete old extractor runs
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          echo "🔎 Fetching last 20 runs of extractor workflow..."
-          runs=$(gh run list --workflow="FMCSA Extractor (Single Batch)" --limit 20 --json databaseId -q '.[].databaseId' --repo "$REPO")
+          python - <<'EOF'
+          import os, requests
 
-          if [ -z "$runs" ]; then
-            echo "⚠ No extractor runs found."
-            exit 0
-          fi
+          repo = os.getenv("REPO")
+          token = os.getenv("GITHUB_TOKEN")
+          headers = {"Authorization": f"token " + token}
 
-          for run_id in $runs; do
-            echo "🗑 Deleting run $run_id"
-            gh run delete $run_id --repo "$REPO" || echo "⚠ Failed to delete run $run_id"
-          done
+          # Get last 30 workflow runs
+          url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=30"
+          resp = requests.get(url, headers=headers)
+          if resp.status_code != 200:
+              print("❌ Failed to fetch runs:", resp.status_code, resp.text)
+              raise SystemExit(1)
+
+          runs = resp.json().get("workflow_runs", [])
+          deleted = 0
+
+          for run in runs:
+              if run["name"] == "FMCSA Extractor (Single Batch)":
+                  run_id = run["id"]
+                  del_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
+                  del_resp = requests.delete(del_url, headers=headers)
+                  if del_resp.status_code == 204:
+                      print(f"🗑 Deleted extractor run {run_id}")
+                      deleted += 1
+                  else:
+                      print(f"⚠ Failed to delete run {run_id}: {del_resp.status_code} {del_resp.text}")
+
+          print(f"✅ Cleanup done — Deleted {deleted} extractor runs")
+          EOF
