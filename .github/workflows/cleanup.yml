@@ -1,0 +1,45 @@
+name: FMCSA Cleanup
+
+permissions:
+  actions: write    # ✅ workflows delete karne ke liye required
+
+on:
+  workflow_run:
+    workflows: ["FMCSA Post Merge"]   # jab Post Merge complete ho, tab trigger hoga
+    types:
+      - completed
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old extractor runs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          
+          repo = os.getenv("REPO")
+          token = os.getenv("GITHUB_TOKEN")
+          headers = {"Authorization": f"token {token}"}
+
+          # Get last 50 runs
+          url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=50"
+          runs = requests.get(url, headers=headers).json().get("workflow_runs", [])
+
+          deleted = 0
+          for run in runs:
+              if run["name"] == "FMCSA Extractor (Single Batch)":
+                  run_id = run["id"]
+                  del_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
+                  resp = requests.delete(del_url, headers=headers)
+                  if resp.status_code == 204:
+                      print(f"🗑 Deleted extractor run {run_id}")
+                      deleted += 1
+                  else:
+                      print(f"⚠ Failed to delete run {run_id}: {resp.status_code} {resp.text}")
+
+          print(f"✅ Cleanup done — Deleted {deleted} extractor runs")
+          EOF
