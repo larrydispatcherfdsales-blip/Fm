@@ -4,15 +4,20 @@ permissions:
   actions: write
 
 on:
-  schedule:
-    - cron: "51 17 * * *"   # ✅ Daily 10:47 PM PKT (Pakistan) = 17:47 UTC
-  workflow_dispatch:         # ✅ Manual run option
+  workflow_run:
+    workflows: ["FMCSA Post Merge"]
+    types:
+      - completed
+
+concurrency:
+  group: cleanup-runs
+  cancel-in-progress: true   # ✅ ek hi cleanup run chalega, baaki cancel ho jayenge
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete old workflow runs (except latest cleanup itself)
+      - name: Delete all workflow runs (except latest cleanup itself)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
