@@ -2,7 +2,6 @@ name: FMCSA Post Merge
 
 permissions:
   contents: write   # push CSV
-  actions: write    # delete workflow runs
 
 on:
   workflow_run:
@@ -24,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: pip install pandas requests
 
-      - name: Download, Merge & Clean Runs
+      - name: Download & Merge Artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -76,17 +75,6 @@ jobs:
               print(f"✅ Final merged CSV with {len(final_df)} rows")
           else:
               print("⚠ No CSVs merged")
-
-          # ---------- STEP 3: Delete old extractor runs ----------
-          for run in runs:
-              if run["name"] == "FMCSA Extractor (Single Batch)":
-                  run_id = run["id"]
-                  del_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
-                  del_resp = requests.delete(del_url, headers=headers)
-                  if del_resp.status_code == 204:
-                      print(f"🗑 Deleted extractor run {run_id}")
-                  else:
-                      print(f"⚠ Failed to delete run {run_id}: {del_resp.status_code} {del_resp.text}")
           EOF
 
       - name: Commit & Push merged file
