@@ -1,0 +1,82 @@
+name: Merge FMCSA CSVs
+
+on:
+  workflow_run:
+    workflows: ["extractor.yml"]   # extractor.yml ka exact naam confirm karna
+    types:
+      - completed
+
+jobs:
+  merge-artifacts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Download artifacts from last run
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install dependencies
+        run: pip install pandas requests
+
+      - name: Merge CSVs & Remove Duplicates
+        run: |
+          import os, pandas as pd, glob
+          os.makedirs("outbox", exist_ok=True)
+
+          csv_files = glob.glob("artifacts/**/*.csv", recursive=True)
+          merged_rows = []
+          for file in csv_files:
+              try:
+                  df = pd.read_csv(file)
+                  merged_rows.append(df)
+              except Exception as e:
+                  print(f"❌ Failed to read {file}: {e}")
+
+          if merged_rows:
+              final_df = pd.concat(merged_rows, ignore_index=True)
+              final_df.drop_duplicates(inplace=True)
+              output_file = "outbox/merged_fmcsa.csv"
+              final_df.to_csv(output_file, index=False)
+              print(f"✅ Merged CSV created at {output_file} with {len(final_df)} rows")
+          else:
+              print("⚠ No CSV files found in artifacts.")
+
+      - name: Commit & Push merged file
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add outbox/merged_fmcsa.csv
+          git commit -m "Auto-merged FMCSA CSVs"
+          git push
+
+      - name: Delete old workflow runs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          import requests, os
+          owner_repo = os.getenv("GITHUB_REPOSITORY")
+          token = os.getenv("GITHUB_TOKEN")
+          headers = {"Authorization": f"token {token}"}
+
+          # Get workflow runs
+          url = f"https://api.github.com/repos/{owner_repo}/actions/runs?per_page=50"
+          resp = requests.get(url, headers=headers)
+          runs = resp.json().get("workflow_runs", [])
+
+          for run in runs:
+              run_id = run["id"]
+              del_url = f"https://api.github.com/repos/{owner_repo}/actions/runs/{run_id}"
+              del_resp = requests.delete(del_url, headers=headers)
+              if del_resp.status_code == 204:
+                  print(f"🗑 Deleted run {run_id}")
+              else:
+                  print(f"⚠ Failed to delete run {run_id}: {del_resp.status_code} {del_resp.text}")
