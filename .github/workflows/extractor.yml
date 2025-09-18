@@ -1,5 +1,8 @@
 name: FMCSA Extractor (Single Batch)
 
+permissions:
+  contents: write   # ✅ allow pushing merged file to repo
+
 on:
   workflow_dispatch:
     inputs:
@@ -76,7 +79,7 @@ jobs:
           import os, glob, pandas as pd
           os.makedirs("outbox", exist_ok=True)
 
-          # collect all CSVs (from this run + previously merged one)
+          # collect all CSVs (new run + previously merged one)
           csv_files = glob.glob("output/*.csv") + glob.glob("outbox/*.csv")
           merged_rows = []
 
@@ -98,9 +101,11 @@ jobs:
           EOF
 
       - name: Commit & Push merged file
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add outbox/merged_fmcsa.csv
           git commit -m "Auto-merged FMCSA CSVs (batch ${{ github.event.inputs.batch_index }})" || echo "No changes to commit"
-          git push
+          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git HEAD:main
