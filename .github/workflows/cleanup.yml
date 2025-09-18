@@ -1,11 +1,11 @@
 name: FMCSA Cleanup
 
 permissions:
-  actions: write    # workflows delete karne ke liye required
+  actions: write
 
 on:
   workflow_run:
-    workflows: ["FMCSA Post Merge"]   # jab Post Merge complete ho, tab trigger hoga
+    workflows: ["FMCSA Post Merge"]
     types:
       - completed
 
@@ -25,18 +25,17 @@ jobs:
           token = os.getenv("GITHUB_TOKEN")
           headers = {"Authorization": f"token " + token}
 
-          # Get last 30 workflow runs
-          url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=30"
+          # Get last 100 workflow runs
+          url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=100"
           resp = requests.get(url, headers=headers)
-          if resp.status_code != 200:
-              print("❌ Failed to fetch runs:", resp.status_code, resp.text)
-              raise SystemExit(1)
-
           runs = resp.json().get("workflow_runs", [])
+
+          print(f"🔎 Total runs fetched: {len(runs)}")
           deleted = 0
 
           for run in runs:
-              if run["name"] == "FMCSA Extractor (Single Batch)":
+              print("➡️ Found run:", run["name"], "ID:", run["id"])
+              if run["name"].strip() == "FMCSA Extractor (Single Batch)":
                   run_id = run["id"]
                   del_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
                   del_resp = requests.delete(del_url, headers=headers)
