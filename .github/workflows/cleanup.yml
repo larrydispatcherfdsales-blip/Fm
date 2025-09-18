@@ -4,8 +4,9 @@ permissions:
   actions: write
 
 on:
+  workflow_dispatch:   # 👈 ab isko manually bhi chala sakte ho
   workflow_run:
-    workflows: ["FMCSA Post Merge"]
+    workflows: ["FMCSA Post Merge"]   # ya jab Post Merge complete ho
     types:
       - completed
 
@@ -13,16 +14,18 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete old extractor runs
+      - name: Delete all workflow runs (except latest cleanup itself)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           python - <<'EOF'
           import os, requests
 
           repo = os.getenv("REPO")
           token = os.getenv("GITHUB_TOKEN")
+          this_run = os.getenv("RUN_ID")
           headers = {"Authorization": f"token " + token}
 
           url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=100"
@@ -33,15 +36,16 @@ jobs:
           deleted = 0
 
           for run in runs:
-              if run["name"].strip() == "FMCSA Dispatcher (All Batches)":   # 👈 extractor ka actual name yahan likho
-                  run_id = run["id"]
-                  del_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
-                  del_resp = requests.delete(del_url, headers=headers)
-                  if del_resp.status_code == 204:
-                      print(f"🗑 Deleted extractor run {run_id}")
-                      deleted += 1
-                  else:
-                      print(f"⚠ Failed to delete run {run_id}: {del_resp.status_code} {del_resp.text}")
+              run_id = str(run["id"])
+              if run_id == this_run:   # apna latest cleanup run skip karo
+                  continue
+              del_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
+              del_resp = requests.delete(del_url, headers=headers)
+              if del_resp.status_code == 204:
+                  print(f"🗑 Deleted run {run['name']} ID {run_id}")
+                  deleted += 1
+              else:
+                  print(f"⚠ Failed to delete {run['name']} {run_id}: {del_resp.status_code} {del_resp.text}")
 
-          print(f"✅ Cleanup done — Deleted {deleted} extractor runs")
+          print(f"✅ Cleanup done — Deleted {deleted} runs")
           EOF
