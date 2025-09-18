@@ -1,7 +1,7 @@
 name: FMCSA Cleanup
 
 permissions:
-  actions: write   # ✅ workflows delete karne ke liye required
+  actions: write    # workflows delete karne ke liye required
 
 on:
   workflow_run:
@@ -17,9 +17,11 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
 
       - name: Delete old extractor runs
+        env:
+          REPO: ${{ github.repository }}
         run: |
           echo "🔎 Fetching last 20 runs of extractor workflow..."
-          runs=$(gh run list --workflow="FMCSA Extractor (Single Batch)" --limit 20 --json databaseId -q '.[].databaseId')
+          runs=$(gh run list --workflow="FMCSA Extractor (Single Batch)" --limit 20 --json databaseId -q '.[].databaseId' --repo "$REPO")
 
           if [ -z "$runs" ]; then
             echo "⚠ No extractor runs found."
@@ -28,5 +30,5 @@ jobs:
 
           for run_id in $runs; do
             echo "🗑 Deleting run $run_id"
-            gh run delete $run_id --confirm || echo "⚠ Failed to delete run $run_id"
+            gh run delete $run_id --confirm --repo "$REPO" || echo "⚠ Failed to delete run $run_id"
           done
