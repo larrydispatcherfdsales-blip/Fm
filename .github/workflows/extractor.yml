@@ -108,4 +108,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add outbox/merged_fmcsa.csv
           git commit -m "Auto-merged FMCSA CSVs (batch ${{ github.event.inputs.batch_index }})" || echo "No changes to commit"
+
+          # ✅ ensure repo is up to date before pushing
+          git pull --rebase https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git main
+
+          # ✅ push merged file
           git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git HEAD:main
