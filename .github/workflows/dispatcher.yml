@@ -1,0 +1,39 @@
+name: FMCSA Dispatcher (All Batches)
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Batch size per run'
+        required: false
+        default: '250'
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Split mc_list into batches
+        run: |
+          mkdir -p batches
+          split -l ${{ github.event.inputs.batch_size }} mc_list.txt batches/batch_
+          ls -l batches
+
+      - name: Dispatch extractor for each batch
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          i=0
+          for f in batches/*; do
+            echo "Dispatching batch $f (index $i)..."
+            gh workflow run extractor.yml \
+              --ref main \
+              -f batch_index=$i \
+              -f batch_size=${{ github.event.inputs.batch_size }} \
+              -f concurrency=4 \
+              -f delay=1000 \
+              -f wait_seconds=0 \
+              -f mode=both
+            i=$((i+1))
+          done
