@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "FMCSA All\u2011in\u2011One (Streaming + Persistent)",
+  "version": "2.6.0",
+  "permissions": [
+    "storage",
+    "downloads",
+    "alarms",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://safer.fmcsa.dot.gov/*",
+    "https://ai.fmcsa.dot.gov/*",
+    "http://ai.fmcsa.dot.gov/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

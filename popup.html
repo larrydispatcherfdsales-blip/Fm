@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>FMCSA All‑in‑One</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:12px;width:340px}
+    h1{font-size:16px;margin:0 0 8px}
+    textarea{width:100%;height:120px;font-family:ui-monospace,Consolas,monospace}
+    .row{display:flex;gap:8px;align-items:center;margin:6px 0}
+    .row label{flex:1}
+    .row input[type=number]{width:90px}
+    .btns{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+    button{padding:6px 10px;cursor:pointer}
+    #status{font-size:12px;color:#444;margin:6px 0}
+    #vpnNote{display:none;font-size:12px;color:#a00}
+    #stats{display:flex;gap:10px;font-size:12px}
+    #stats div{background:#f3f3f3;padding:6px 8px;border-radius:6px}
+    #log{white-space:pre-wrap;font-size:11px;height:140px;overflow:auto;background:#0b1020;color:#e6edf3;padding:8px;border-radius:6px}
+    .muted{opacity:.75}
+  </style>
+</head>
+<body>
+  <h1>FMCSA All‑in‑One</h1>
+
+  <div class="row"><label for="mcInput">Paste MC numbers (one per line)</label></div>
+  <textarea id="mcInput" placeholder="e.g.
+123456
+765432
+..."></textarea>
+
+  <div class="row"><label class="muted">Mode</label></div>
+  <div class="btns">
+    <button id="startFetch" title="Only find valid URLs">Start: URLs Only</button>
+    <button id="startBoth" title="Find URLs and auto extract">Start: Auto Extract</button>
+    <button id="resumeBtn" style="display:none">Resume</button>
+    <button id="stopBtn" style="display:none">Stop</button>
+    <button id="resetBtn" style="margin-left:auto">Reset</button>
+  </div>
+
+  <div id="vpnNote">Batch finished. Change VPN or wait for timer, then resume (auto-resume if timer set).</div>
+
+  <div class="row">
+    <label>Concurrency</label><input id="concurrency" type="number" min="1" max="20" value="6">
+    <label>Delay (ms)</label><input id="delay" type="number" min="0" value="300">
+  </div>
+  <div class="row">
+    <label>Batch size</label><input id="batchSize" type="number" min="1" value="500">
+    <label>Auto-pause</label><input id="autoPause" type="checkbox" checked>
+  </div>
+  <div class="row">
+    <label>Pause timer (seconds)</label><input id="waitSeconds" type="number" min="0" value="0">
+    <label>Open tabs while fetching</label><input id="openTabs" type="checkbox">
+  </div>
+
+  <div id="stats">
+    <div>Processed: <b id="sProcessed">0</b></div>
+    <div>Valid URLs: <b id="sValid">0</b></div>
+    <div>Extracted: <b id="sExtracted">0</b></div>
+  </div>
+
+  <div class="btns">
+    <button id="copyUrls">Copy URLs</button>
+    <button id="downloadUrls">Download URLs</button>
+    <button id="downloadCSV">Download CSV</button>
+  </div>
+
+  <div id="status" class="muted">idle</div>
+  <div id="log"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

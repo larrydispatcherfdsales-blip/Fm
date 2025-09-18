@@ -1,0 +1,9 @@
+{
+  "name": "fmcsa-headless",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Headless FMCSA extractor (Node + Actions)",
+  "scripts": {
+    "start": "node extractor.js"
+  }
+}
