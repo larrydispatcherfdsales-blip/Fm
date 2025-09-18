@@ -25,7 +25,6 @@ jobs:
           token = os.getenv("GITHUB_TOKEN")
           headers = {"Authorization": f"token " + token}
 
-          # Get last 100 workflow runs
           url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=100"
           resp = requests.get(url, headers=headers)
           runs = resp.json().get("workflow_runs", [])
@@ -34,8 +33,7 @@ jobs:
           deleted = 0
 
           for run in runs:
-              print("➡️ Found run:", run["name"], "ID:", run["id"])
-              if run["name"].strip() == "FMCSA Extractor (Single Batch)":
+              if run["name"].strip() == "FMCSA Dispatcher (All Batches)":   # 👈 extractor ka actual name yahan likho
                   run_id = run["id"]
                   del_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
                   del_resp = requests.delete(del_url, headers=headers)
