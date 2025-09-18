@@ -1,0 +1,62 @@
+name: FMCSA Extractor (Single Batch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_index:
+        description: 'Which batch to run (0-based)'
+        required: true
+        default: '0'
+      batch_size:
+        description: 'Batch size'
+        required: false
+        default: '250'
+      concurrency:
+        description: 'Parallel requests'
+        required: false
+        default: '4'
+      delay:
+        description: 'Delay between waves (ms)'
+        required: false
+        default: '1000'
+      wait_seconds:
+        description: 'Pause between batches (not used here)'
+        required: false
+        default: '0'
+      mode:
+        description: 'both (extract) or urls (only URLs)'
+        required: false
+        default: 'both'
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run extractor for this batch
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONCURRENCY: ${{ github.event.inputs.concurrency }}
+          DELAY: ${{ github.event.inputs.delay }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size }}
+          WAIT_SECONDS: ${{ github.event.inputs.wait_seconds }}
+          BATCH_INDEX: ${{ github.event.inputs.batch_index }}
+        run: |
+          node -v
+          mkdir -p output
+          node extractor.js
+
+      - name: Upload CSV artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fmcsa-output-batch-${{ github.event.inputs.batch_index }}
+          path: output/*.csv
+          if-no-files-found: ignore
+          retention-days: 7
