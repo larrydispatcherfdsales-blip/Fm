@@ -4,17 +4,15 @@ permissions:
   actions: write
 
 on:
-  workflow_dispatch:   # 👈 ab isko manually bhi chala sakte ho
-  workflow_run:
-    workflows: ["FMCSA Post Merge"]   # ya jab Post Merge complete ho
-    types:
-      - completed
+  schedule:
+    - cron: "51 17 * * *"   # ✅ Daily 10:47 PM PKT (Pakistan) = 17:47 UTC
+  workflow_dispatch:         # ✅ Manual run option
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete all workflow runs (except latest cleanup itself)
+      - name: Delete old workflow runs (except latest cleanup itself)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
