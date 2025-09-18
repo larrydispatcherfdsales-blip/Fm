@@ -27,19 +27,24 @@ jobs:
 
           # Get last 50 runs
           url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=50"
-          runs = requests.get(url, headers=headers).json().get("workflow_runs", [])
+          resp = requests.get(url, headers=headers)
+          if resp.status_code != 200:
+              print(f"❌ Failed to fetch runs: {resp.status_code} {resp.text}")
+              exit(1)
+
+          runs = resp.json().get("workflow_runs", [])
 
           deleted = 0
           for run in runs:
               if run["name"] == "FMCSA Extractor (Single Batch)":
                   run_id = run["id"]
                   del_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
-                  resp = requests.delete(del_url, headers=headers)
-                  if resp.status_code == 204:
+                  del_resp = requests.delete(del_url, headers=headers)
+                  if del_resp.status_code == 204:
                       print(f"🗑 Deleted extractor run {run_id}")
                       deleted += 1
                   else:
-                      print(f"⚠ Failed to delete run {run_id}: {resp.status_code} {resp.text}")
+                      print(f"⚠ Failed to delete run {run_id}: {del_resp.status_code} {del_resp.text}")
 
           print(f"✅ Cleanup done — Deleted {deleted} extractor runs")
           EOF
