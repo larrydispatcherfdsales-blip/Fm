@@ -1,4 +1,4 @@
-# ===== fmcsa-dispatcher.yml (Updated) =====
+# ===== fmcsa-dispatcher.yml (Corrected) =====
 name: FMCSA Dispatcher (All Batches)
 
 on:
@@ -49,11 +49,15 @@ jobs:
             sleep 2 # API rate limit se bachne ke liye thora pause
           done
 
-  # Naya Job: Yeh job saare batches ke complete hone ka intezar karega
+  # Yeh job saare batches ke complete hone ka intezar karega
   gatekeeper:
     runs-on: ubuntu-latest
     needs: dispatch # Pehle dispatch job chalega
     steps:
+      # YEH STEP ADD KIYA GAYA HAI (THE FIX)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Wait for all dispatched workflows to complete
         uses: ahmadnassri/action-workflow-run-wait@v1
         with:
@@ -67,6 +71,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "✅ All extractor jobs are done. Triggering the merge and cleanup process."
+          echo "✅ All extractor jobs are done. Triggering the merge process."
           gh workflow run fmcsa-post-merge.yml --ref main
-
