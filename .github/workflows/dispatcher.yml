@@ -1,153 +1,145 @@
-# ===== fmcsa-dispatcher.yml (FINAL COMBINED VERSION) =====
-name: FMCSA Dispatcher, Wait, and Merge
+name: 1. FMCSA - Dispatch and Merge
 
 on:
   workflow_dispatch:
     inputs:
       batch_size:
-        description: 'Batch size per run'
-        required: false
-        default: '250'
+        description: 'Number of MCs per batch'
+        required: true
+        default: '500'
       concurrency:
-        description: 'Parallel requests per extractor'
-        required: false
-        default: '8'
-      delay:
-        description: 'Delay between waves (ms)'
-        required: false
-        default: '1000'
+        description: 'Parallel requests inside each batch'
+        required: true
+        default: '10'
+
+permissions:
+  actions: write
+  contents: write
 
 jobs:
-  # Job 1: Batches banata hai aur unhein trigger karta hai
+  # === JOB 1: Start all batch jobs ===
   dispatch:
     runs-on: ubuntu-latest
-    outputs:
-      run_id: ${{ github.run_id }} # Is run ki ID ko agle job mein pass karein
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - name: Split mc_list into batches
+      - name: Split mc_list.txt into batch files
         run: |
-          mkdir -p batches
-          split -l ${{ github.event.inputs.batch_size }} mc_list.txt batches/batch_
+          mkdir -p .batches
+          split -l ${{ github.event.inputs.batch_size }} mc_list.txt .batches/batch_
+          echo "✅ Created $(ls .batches | wc -l) batch files."
 
-      - name: Dispatch extractor for each batch
+      - name: Trigger a workflow for each batch file
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           i=0
-          for f in batches/*; do
-            echo "Dispatching batch $f (index $i)..."
+          for f in .batches/*; do
+            echo "Dispatching workflow for batch index $i..."
+            # 'gh workflow run' command to trigger the extractor
             gh workflow run extractor.yml \
-              --ref main \
+              --ref ${{ github.ref_name }} \
               -f batch_index=$i \
-              -f batch_size=${{ github.event.inputs.batch_size }} \
-              -f concurrency=${{ github.event.inputs.concurrency }} \
-              -f delay=${{ github.event.inputs.delay }}
+              -f concurrency=${{ github.event.inputs.concurrency }}
+            
             i=$((i+1))
-            sleep 2
+            sleep 2 # Pause to avoid hitting API rate limits
           done
 
-  # Job 2: Saare extractor jobs ke complete hone ka intezar karta hai
-  wait-for-batches:
+  # === JOB 2: Wait for all batch jobs to finish ===
+  gatekeeper:
     runs-on: ubuntu-latest
     needs: dispatch
     steps:
-      - name: Wait for all dispatched workflows to complete
+      - name: Wait for all 'FMCSA Extractor' workflows to complete
         uses: lewagon/wait-on-check-action@v1.3.3
         with:
-          ref: ${{ github.ref }}
-          check-name: 'run' # Job name in extractor.yml
+          ref: ${{ github.ref_name }}
+          check-name: 'run-extraction' # This must match the job name in extractor.yml
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 60
-          running-workflow-name: 'FMCSA Extractor (Single Batch)'
+          wait-interval: 60 # Check status every 60 seconds
+          running-workflow-name: '2. FMCSA Extractor (Single Batch)' # The display name of the workflow to wait for
           allowed-conclusions: success,skipped,failure,cancelled
 
-  # Job 3: Saare results ko merge karta hai
+  # === JOB 3: Download all results, merge them, and push to repo ===
   merge-and-commit:
     runs-on: ubuntu-latest
-    needs: wait-for-batches # Intezar ke baad hi chalega
+    needs: gatekeeper
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository to commit to
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
-        run: pip install pandas requests
+      - name: Install Python dependencies
+        run: pip install pandas
 
-      - name: Download All Artifacts from Recent Runs
-        id: download
+      - name: Download all artifacts from completed extractor runs
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: extractor.yml
+          workflow: extractor.yml # File name of the workflow
           workflow_conclusion: completed
-          name: fmcsa-output-batch-.* # Regex se saare batch artifacts match karein
-          path: artifacts
+          name: fmcsa-output-batch-.* # Regex to match all batch artifacts
+          path: ./artifacts # Download to a folder named 'artifacts'
           github_token: ${{ secrets.GITHUB_TOKEN }}
           search_artifacts: true
 
-      - name: Merge All CSVs
-        id: merge_step
+      - name: Merge all downloaded CSVs into one file
+        id: merge_csv
         run: |
           python - <<'EOF'
-          import os, glob
+          import os
+          import glob
           import pandas as pd
 
-          csv_files = glob.glob("artifacts/**/*.csv", recursive=True)
-          print(f"Found {len(csv_files)} CSV files to merge.")
-
+          # Find all CSV files inside the downloaded artifacts folder
+          path = "artifacts"
+          csv_files = glob.glob(os.path.join(path, "**/*.csv"), recursive=True)
+          
           if not csv_files:
-              print("⚠️ No CSV files found. Exiting.")
-              print("NO_FILES=true", file=open(os.getenv("GITHUB_OUTPUT"), 'a'))
-              os.makedirs("output", exist_ok=True)
-              with open("output/merged_fmcsa_data.csv", "w") as f:
-                  f.write("email,mcNumber,phone,url\n")
+              print("⚠️ No CSV files found to merge. Nothing to do.")
               exit()
 
+          print(f"Found {len(csv_files)} CSV files to merge.")
+          
+          # Read all CSVs into a list of DataFrames
           all_dfs = []
-          for file in csv_files:
+          for f in csv_files:
               try:
-                  df = pd.read_csv(file, on_bad_lines='skip')
+                  df = pd.read_csv(f, on_bad_lines='skip')
                   if not df.empty:
                       all_dfs.append(df)
               except Exception as e:
-                  print(f"❌ Failed to read or process {file}: {e}")
+                  print(f"Could not read {f}: {e}")
 
           if not all_dfs:
-              print("⚠️ CSV files were found, but all were empty or corrupt.")
-              print("NO_FILES=true", file=open(os.getenv("GITHUB_OUTPUT"), 'a'))
-              os.makedirs("output", exist_ok=True)
-              with open("output/merged_fmcsa_data.csv", "w") as f:
-                  f.write("email,mcNumber,phone,url\n")
+              print("⚠️ All found CSV files were empty or corrupt. Nothing to merge.")
               exit()
 
+          # Combine all DataFrames into one
           final_df = pd.concat(all_dfs, ignore_index=True)
           print(f"Total rows before dropping duplicates: {len(final_df)}")
-          
-          # Email aur mcNumber par duplicates hatayein
-          final_df.drop_duplicates(subset=['email', 'mcNumber'], keep='first', inplace=True)
+
+          # Remove duplicates based on 'mcNumber' and 'email'
+          final_df.drop_duplicates(subset=['mcNumber', 'email'], keep='first', inplace=True)
           print(f"Total rows after dropping duplicates: {len(final_df)}")
-          
+
+          # Save the final merged data
+          output_path = "output/merged_fmcsa_data.csv"
           os.makedirs("output", exist_ok=True)
-          final_df.to_csv("output/merged_fmcsa_data.csv", index=False)
-          print(f"✅ Final merged CSV created with {len(final_df)} unique rows.")
+          final_df.to_csv(output_path, index=False)
+          print(f"✅ Successfully created merged file at '{output_path}' with {len(final_df)} rows.")
           EOF
 
-      - name: Commit & Push merged file
+      - name: Commit and push the merged data file
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add output/merged_fmcsa_data.csv
-          git commit -m "chore: Update merged FMCSA data from workflow run" || echo "No changes to commit"
+          # Commit only if there are changes
+          git diff --staged --quiet || git commit -m "chore: Update merged FMCSA data"
           git push
-
-      - name: Trigger Cleanup
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Triggering cleanup workflow..."
-          gh workflow run cleanup.yml --ref main
