@@ -21,7 +21,7 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     outputs:
-      total_batches: ${{ steps.calculate_batches.outputs.count }}
+      run_id: ${{ github.run_id }} # Yeh line ahem hai
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -59,7 +59,7 @@ jobs:
         uses: lewagon/wait-on-check-action@v1.3.3
         with:
           ref: ${{ github.ref_name }}
-          check-name: 'run-extraction' # Job name in extractor.yml
+          check-name: 'run-extraction'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 60
           running-workflow-name: '2. FMCSA Extractor (Single Batch)'
@@ -68,7 +68,7 @@ jobs:
   # === JOB 3: Download, merge, and commit results ===
   merge-and-commit:
     runs-on: ubuntu-latest
-    needs: gatekeeper
+    needs: [dispatch, gatekeeper] # dispatch se run_id lene ke liye
     steps:
       - name: Checkout repository to commit to
         uses: actions/checkout@v4
@@ -86,7 +86,9 @@ jobs:
         with:
           workflow: extractor.yml
           workflow_conclusion: completed
-          name: fmcsa-output-batch-.* # Regex to match all batch artifacts
+          # === YEH LINE SABSE AHEM HAI ===
+          run_id: ${{ needs.dispatch.outputs.run_id }}
+          name: fmcsa-output-batch-.*
           path: ./artifacts
           github_token: ${{ secrets.GITHUB_TOKEN }}
           search_artifacts: true
@@ -123,7 +125,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add output/merged_fmcsa_data.csv
-          # Commit only if there are changes
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else
