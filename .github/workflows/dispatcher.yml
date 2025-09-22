@@ -1,4 +1,4 @@
-# ===== fmcsa-dispatcher.yml (Corrected) =====
+# ===== fmcsa-dispatcher.yml (Updated) =====
 name: FMCSA Dispatcher (All Batches)
 
 on:
@@ -24,13 +24,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Split mc_list into batches
-        id: split
         run: |
           mkdir -p batches
           split -l ${{ github.event.inputs.batch_size }} mc_list.txt batches/batch_
-          B_COUNT=$(ls batches | wc -l)
-          echo "batch_count=$B_COUNT" >> $GITHUB_OUTPUT
-          echo "✅ Created $B_COUNT batches."
 
       - name: Dispatch extractor for each batch
         env:
@@ -46,30 +42,28 @@ jobs:
               -f concurrency=${{ github.event.inputs.concurrency }} \
               -f delay=${{ github.event.inputs.delay }}
             i=$((i+1))
-            sleep 2 # API rate limit se bachne ke liye thora pause
+            sleep 2
           done
 
-  # Yeh job saare batches ke complete hone ka intezar karega
   gatekeeper:
     runs-on: ubuntu-latest
-    needs: dispatch # Pehle dispatch job chalega
+    needs: dispatch
     steps:
-      # YEH STEP ADD KIYA GAYA HAI (THE FIX)
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
+      # === YAHAN ACTION BADLA GAYA HAI ===
       - name: Wait for all dispatched workflows to complete
-        uses: ahmadnassri/action-workflow-run-wait@v1
+        uses: lewagon/wait-on-check-action@v1.3.3
         with:
-          workflow: extractor.yml # Intezar karo 'extractor.yml' ke saare runs ka
-          token: ${{ secrets.GITHUB_TOKEN }}
-          timeout: 3600000 # 1 ghanta timeout
-          retries: 5
-          wait: 60000 # Har 1 minute baad check karo
+          ref: ${{ github.ref }}
+          check-name: 'run' # 'run' job ka naam hai extractor.yml mein
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 60 # Har 60 seconds mein check karo
+          running-workflow-name: 'FMCSA Extractor (Single Batch)' # Is workflow ke saare runs ka intezar karo
 
       - name: All batches complete, triggering merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "✅ All extractor jobs are done. Triggering the merge process."
-          gh workflow run post-merge.yml --ref main
+          gh workflow run "FMCSA Post Merge" --ref main
