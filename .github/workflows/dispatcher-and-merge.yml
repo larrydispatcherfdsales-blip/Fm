@@ -6,14 +6,14 @@ on:
       batch_size:
         description: 'Number of MCs per batch'
         required: true
-        default: '500'
+        default: '250' # Default 250 kar diya hai
       concurrency:
         description: 'Parallel requests inside each batch'
         required: true
         default: '10'
 
 permissions:
-  actions: write
+  actions: read # Sirf read permission zaroori hai
   contents: write
 
 jobs:
@@ -21,7 +21,7 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     outputs:
-      run_id: ${{ github.run_id }} # Yeh line ahem hai
+      run_id: ${{ github.run_id }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -31,9 +31,10 @@ jobs:
         run: |
           BATCH_SIZE=${{ github.event.inputs.batch_size }}
           TOTAL_LINES=$(wc -l < mc_list.txt)
+          # Correct batch count calculation
           BATCH_COUNT=$(( (TOTAL_LINES + BATCH_SIZE - 1) / BATCH_SIZE ))
           echo "count=$BATCH_COUNT" >> $GITHUB_OUTPUT
-          echo "Total MCs: $TOTAL_LINES, Batch Size: $BATCH_SIZE, Total Batches: $BATCH_COUNT"
+          echo "Total MCs: $TOTAL_LINES, Batch Size: $BATCH_SIZE, Total Batches to run: $BATCH_COUNT"
 
       - name: Trigger a workflow for each batch
         env:
@@ -61,14 +62,14 @@ jobs:
           ref: ${{ github.ref_name }}
           check-name: 'run-extraction'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 60
+          wait-interval: 30 # 30 seconds
           running-workflow-name: '2. FMCSA Extractor (Single Batch)'
           allowed-conclusions: success,skipped,failure,cancelled
 
   # === JOB 3: Download, merge, and commit results ===
   merge-and-commit:
     runs-on: ubuntu-latest
-    needs: [dispatch, gatekeeper] # dispatch se run_id lene ke liye
+    needs: [dispatch, gatekeeper]
     steps:
       - name: Checkout repository to commit to
         uses: actions/checkout@v4
@@ -85,13 +86,12 @@ jobs:
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: extractor.yml
-          workflow_conclusion: completed
-          # === YEH LINE SABSE AHEM HAI ===
-          run_id: ${{ needs.dispatch.outputs.run_id }}
+          # === YEH LINE THEEK KI GAYI HAI ===
+          name_is_regexp: true # Isko true karna zaroori hai
           name: fmcsa-output-batch-.*
           path: ./artifacts
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          search_artifacts: true
+          run_id: ${{ needs.dispatch.outputs.run_id }}
 
       - name: Merge all downloaded CSVs
         id: merge_csv
@@ -99,7 +99,8 @@ jobs:
           python - <<'EOF'
           import os, glob, pandas as pd
           path = "artifacts"
-          csv_files = glob.glob(os.path.join(path, "**/*.csv"), recursive=True)
+          # Artifacts ab 'fmcsa-output-batch-0', 'fmcsa-output-batch-1' etc. naam ke folders mein aayenge
+          csv_files = glob.glob(os.path.join(path, "**", "*.csv"), recursive=True)
           if not csv_files:
               print("⚠️ No CSV files found to merge. Creating empty output file.")
               os.makedirs("output", exist_ok=True)
