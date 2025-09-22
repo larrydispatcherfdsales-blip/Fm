@@ -6,40 +6,34 @@ on:
       batch_index:
         description: 'The index of the batch to process (e.g., 0, 1, 2)'
         required: true
+      batch_size:
+        description: 'Number of MCs per batch'
+        required: true
       concurrency:
         description: 'Parallel requests for the extractor script'
         required: true
-        default: '10'
 
 jobs:
-  run-extraction: # Job ka naam 'run-extraction' rakha hai
+  run-extraction: # Job ka naam 'run-extraction' hai
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Download the specific batch file created by dispatcher
-        uses: actions/download-artifact@v4
-        with:
-          name: batch-files
-          path: .batches
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Prepare batch.txt for the script
+      - name: Create batch.txt for this specific job
         run: |
-          # Find the correct batch file based on index
-          BATCH_FILE=$(ls .batches | sort | sed -n '${{ github.event.inputs.batch_index + 1 }}p')
-          if [ -z "$BATCH_FILE" ]; then
-            echo "::error::Batch file for index ${{ github.event.inputs.batch_index }} not found!"
-            exit 1
-          fi
-          # Copy the correct batch file to 'batch.txt' which the script reads
-          cp ".batches/$BATCH_FILE" ./batch.txt
-          echo "✅ Prepared batch.txt for index ${{ github.event.inputs.batch_index }}"
+          # Yeh script ab khud mc_list.txt se apne hisse ki lines nikalegi
+          START_LINE=$(( ${{ github.event.inputs.batch_index }} * ${{ github.event.inputs.batch_size }} + 1 ))
+          BATCH_SIZE=${{ github.event.inputs.batch_size }}
+          
+          tail -n +$START_LINE mc_list.txt | head -n $BATCH_SIZE > batch.txt
+          
+          echo "✅ Created batch.txt for index ${{ github.event.inputs.batch_index }} with $(wc -l < batch.txt) lines."
 
       - name: Run the extractor script
         env:
@@ -47,6 +41,7 @@ jobs:
           BATCH_INDEX: ${{ github.event.inputs.batch_index }}
         run: |
           mkdir -p output
+          # extractor.js ab hamesha batch.txt se data parhega
           node extractor.js
 
       - name: Upload the resulting CSV as an artifact
