@@ -14,7 +14,7 @@ on:
       concurrency:
         description: 'Parallel requests'
         required: false
-        default: '4'
+        default: '8'
       delay:
         description: 'Delay between waves (ms)'
         required: false
@@ -32,13 +32,26 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
+      - name: Create batch file from main list
+        run: |
+          # Calculate the starting line number for this batch
+          START_LINE=$(( ${{ github.event.inputs.batch_index }} * ${{ github.event.inputs.batch_size }} + 1 ))
+          
+          # Extract the lines for the current batch and create batch.txt
+          tail -n +$START_LINE mc_list.txt | head -n ${{ github.event.inputs.batch_size }} > batch.txt
+          
+          echo "Created batch.txt for batch index ${{ github.event.inputs.batch_index }}"
+          echo "Batch content:"
+          cat batch.txt | head -n 5 # Sirf pehli 5 lines dikhao
+          
       - name: Run extractor for this batch
         env:
           MODE: ${{ github.event.inputs.mode }}
@@ -50,14 +63,16 @@ jobs:
         run: |
           node -v
           mkdir -p output
+          # Ab script hamesha batch.txt se parhegi
           node extractor.js
-
 
       - name: Upload CSV artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: output-batch-${{ github.event.inputs.batch_index }}
+          # Yeh naam ab dispatcher/merger se match karta hai
+          name: fmcsa-output-batch-${{ github.event.inputs.batch_index }}
           path: output/*.csv
           if-no-files-found: ignore
-          retention-days: 7
+          # Retention period kam kar diya hai kyunke merge foran ho jayega
+          retention-days: 1
