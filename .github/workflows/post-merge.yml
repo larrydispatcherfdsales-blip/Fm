@@ -2,7 +2,7 @@
 name: FMCSA Post Merge
 
 on:
-  workflow_dispatch: # Ab yeh manually ya doosre workflow se trigger hoga
+  workflow_dispatch:
 
 jobs:
   process:
@@ -21,7 +21,6 @@ jobs:
       - name: Download & Merge All Artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_ID: ${{ github.run_id }}
         run: |
           python - <<'EOF'
           import os, requests, zipfile, glob
@@ -30,12 +29,18 @@ jobs:
 
           repo = os.getenv("GITHUB_REPOSITORY")
           token = os.getenv("GITHUB_TOKEN")
-          current_run_id = os.getenv("RUN_ID")
           headers = {"Authorization": f"token {token}"}
 
-          # Get all workflow runs for 'extractor.yml'
+          # === YEH LINE THEEK KI GAYI HAI ===
+          # Pehle yahan workflow ka display name tha, ab file ka naam hai
           runs_url = f"https://api.github.com/repos/{repo}/actions/workflows/extractor.yml/runs?status=completed&per_page=100"
-          runs = requests.get(runs_url, headers=headers ).json().get("workflow_runs", [])
+          
+          runs_response = requests.get(runs_url, headers=headers )
+          if runs_response.status_code != 200:
+              print(f"❌ Failed to fetch workflow runs. Status: {runs_response.status_code}, Response: {runs_response.text}")
+              runs = []
+          else:
+              runs = runs_response.json().get("workflow_runs", [])
 
           os.makedirs("artifacts", exist_ok=True)
           downloaded_artifacts = 0
@@ -44,22 +49,29 @@ jobs:
 
           for run in runs:
               artifacts_url = run["artifacts_url"]
-              artifacts = requests.get(artifacts_url, headers=headers).json().get("artifacts", [])
+              artifacts_response = requests.get(artifacts_url, headers=headers)
+              if artifacts_response.status_code != 200:
+                  print(f"❌ Failed to fetch artifacts for run ID {run['id']}.")
+                  continue
+              
+              artifacts = artifacts_response.json().get("artifacts", [])
               for art in artifacts:
-                  if "output-batch" in art["name"]:
+                  if "fmcsa-output-batch" in art["name"]:
                       print(f"Downloading artifact: {art['name']} from run ID {run['id']}")
                       dl_url = art["archive_download_url"]
                       r = requests.get(dl_url, headers=headers, timeout=60)
                       if r.status_code == 200:
-                          with zipfile.ZipFile(BytesIO(r.content)) as zf:
-                              zf.extractall("artifacts")
-                              downloaded_artifacts += 1
+                          try:
+                              with zipfile.ZipFile(BytesIO(r.content)) as zf:
+                                  zf.extractall("artifacts")
+                                  downloaded_artifacts += 1
+                          except zipfile.BadZipFile:
+                              print(f"❌ Bad ZIP file for artifact {art['name']}.")
                       else:
                           print(f"❌ Failed to download artifact {art['name']}. Status: {r.status_code}")
 
           print(f"✅ Downloaded {downloaded_artifacts} artifacts.")
 
-          # Merge CSVs
           all_dfs = []
           csv_files = glob.glob("artifacts/**/*.csv", recursive=True)
           print(f"Found {len(csv_files)} CSV files to merge.")
@@ -75,22 +87,24 @@ jobs:
           if all_dfs:
               final_df = pd.concat(all_dfs, ignore_index=True)
               print(f"Total rows before dropping duplicates: {len(final_df)}")
-              # Duplicates ko email aur mcNumber ki bunyaad par drop karein
               final_df.drop_duplicates(subset=['email', 'mcNumber'], keep='first', inplace=True)
               print(f"Total rows after dropping duplicates: {len(final_df)}")
               
               os.makedirs("output", exist_ok=True)
-              final_df.to_csv("output/merged_data.csv", index=False)
+              final_df.to_csv("output/merged_fmcsa_data.csv", index=False)
               print(f"✅ Final merged CSV created with {len(final_df)} unique rows.")
           else:
-              print("⚠️ No data found in any CSVs. Nothing to merge.")
+              print("⚠️ No data found in any CSVs. Creating an empty placeholder file.")
+              os.makedirs("output", exist_ok=True)
+              with open("output/merged_fmcsa_data.csv", "w") as f:
+                  f.write("email,mcNumber,phone,url\n")
           EOF
 
       - name: Commit & Push merged file
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add output/merged_data.csv
+          git add output/merged_fmcsa_data.csv
           git commit -m "chore: Update merged FMCSA data" || echo "No changes to commit"
           git push
 
