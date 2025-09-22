@@ -1,0 +1,132 @@
+name: 1. FMCSA - Dispatch, Wait, and Merge
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Number of MCs per batch'
+        required: true
+        default: '500'
+      concurrency:
+        description: 'Parallel requests inside each batch'
+        required: true
+        default: '10'
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  # === JOB 1: Calculate batches and trigger extractor jobs ===
+  dispatch:
+    runs-on: ubuntu-latest
+    outputs:
+      total_batches: ${{ steps.calculate_batches.outputs.count }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Calculate total number of batches
+        id: calculate_batches
+        run: |
+          BATCH_SIZE=${{ github.event.inputs.batch_size }}
+          TOTAL_LINES=$(wc -l < mc_list.txt)
+          BATCH_COUNT=$(( (TOTAL_LINES + BATCH_SIZE - 1) / BATCH_SIZE ))
+          echo "count=$BATCH_COUNT" >> $GITHUB_OUTPUT
+          echo "Total MCs: $TOTAL_LINES, Batch Size: $BATCH_SIZE, Total Batches: $BATCH_COUNT"
+
+      - name: Trigger a workflow for each batch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOTAL_BATCHES: ${{ steps.calculate_batches.outputs.count }}
+        run: |
+          for (( i=0; i<$TOTAL_BATCHES; i++ )); do
+            echo "Dispatching workflow for batch index $i..."
+            gh workflow run extractor.yml \
+              --ref ${{ github.ref_name }} \
+              -f batch_index=$i \
+              -f batch_size=${{ github.event.inputs.batch_size }} \
+              -f concurrency=${{ github.event.inputs.concurrency }}
+            sleep 2 # Avoid API rate limits
+          done
+
+  # === JOB 2: Wait for all extractor jobs to finish ===
+  gatekeeper:
+    runs-on: ubuntu-latest
+    needs: dispatch
+    steps:
+      - name: Wait for all 'FMCSA Extractor' workflows to complete
+        uses: lewagon/wait-on-check-action@v1.3.3
+        with:
+          ref: ${{ github.ref_name }}
+          check-name: 'run-extraction' # Job name in extractor.yml
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 60
+          running-workflow-name: '2. FMCSA Extractor (Single Batch)'
+          allowed-conclusions: success,skipped,failure,cancelled
+
+  # === JOB 3: Download, merge, and commit results ===
+  merge-and-commit:
+    runs-on: ubuntu-latest
+    needs: gatekeeper
+    steps:
+      - name: Checkout repository to commit to
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install Python dependencies
+        run: pip install pandas
+
+      - name: Download all artifacts from completed extractor runs
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: extractor.yml
+          workflow_conclusion: completed
+          name: fmcsa-output-batch-.* # Regex to match all batch artifacts
+          path: ./artifacts
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          search_artifacts: true
+
+      - name: Merge all downloaded CSVs
+        id: merge_csv
+        run: |
+          python - <<'EOF'
+          import os, glob, pandas as pd
+          path = "artifacts"
+          csv_files = glob.glob(os.path.join(path, "**/*.csv"), recursive=True)
+          if not csv_files:
+              print("⚠️ No CSV files found to merge. Creating empty output file.")
+              os.makedirs("output", exist_ok=True)
+              with open("output/merged_fmcsa_data.csv", "w") as f: f.write("email,mcNumber,phone,url\n")
+              exit()
+          print(f"Found {len(csv_files)} CSV files to merge.")
+          all_dfs = [pd.read_csv(f, on_bad_lines='skip') for f in csv_files if os.path.getsize(f) > 0]
+          if not all_dfs:
+              print("⚠️ All CSV files were empty or corrupt.")
+              exit()
+          final_df = pd.concat(all_dfs, ignore_index=True)
+          print(f"Total rows before dropping duplicates: {len(final_df)}")
+          final_df.drop_duplicates(subset=['mcNumber', 'email'], keep='first', inplace=True)
+          print(f"Total rows after dropping duplicates: {len(final_df)}")
+          output_path = "output/merged_fmcsa_data.csv"
+          os.makedirs("output", exist_ok=True)
+          final_df.to_csv(output_path, index=False)
+          print(f"✅ Successfully created merged file at '{output_path}' with {len(final_df)} rows.")
+          EOF
+
+      - name: Commit and push the merged data file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/merged_fmcsa_data.csv
+          # Commit only if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: Update merged FMCSA data"
+            git push
+          fi
