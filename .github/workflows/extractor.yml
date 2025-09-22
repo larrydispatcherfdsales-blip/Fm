@@ -52,6 +52,7 @@ jobs:
           mkdir -p output
           node extractor.js
 
+
       - name: Upload CSV artifacts
         if: always()
         uses: actions/upload-artifact@v4
