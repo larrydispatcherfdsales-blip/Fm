@@ -1,54 +1,20 @@
+# ===== fmcsa-cleanup.yml (Updated) =====
 name: FMCSA Cleanup
 
-permissions:
-  actions: write
-
 on:
-  workflow_run:
-    workflows: ["FMCSA Post Merge"]
-    types:
-      - completed
-
-concurrency:
-  group: cleanup-runs
-  cancel-in-progress: true   # ✅ ek hi cleanup run chalega, baaki cancel ho jayenge
+  workflow_dispatch: # Ab yeh manually ya doosre workflow se trigger hoga
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
     steps:
-      - name: Delete all workflow runs (except latest cleanup itself)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          python - <<'EOF'
-          import os, requests
-
-          repo = os.getenv("REPO")
-          token = os.getenv("GITHUB_TOKEN")
-          this_run = os.getenv("RUN_ID")
-          headers = {"Authorization": f"token " + token}
-
-          url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=100"
-          resp = requests.get(url, headers=headers)
-          runs = resp.json().get("workflow_runs", [])
-
-          print(f"🔎 Total runs fetched: {len(runs)}")
-          deleted = 0
-
-          for run in runs:
-              run_id = str(run["id"])
-              if run_id == this_run:   # apna latest cleanup run skip karo
-                  continue
-              del_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
-              del_resp = requests.delete(del_url, headers=headers)
-              if del_resp.status_code == 204:
-                  print(f"🗑 Deleted run {run['name']} ID {run_id}")
-                  deleted += 1
-              else:
-                  print(f"⚠ Failed to delete {run['name']} {run_id}: {del_resp.status_code} {del_resp.text}")
-
-          print(f"✅ Cleanup done — Deleted {deleted} runs")
-          EOF
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 1 # Sirf sabse naya run rakho
+          delete_workflow_pattern: "FMCSA Extractor (Single Batch)" # Sirf extractor ke runs delete karo
