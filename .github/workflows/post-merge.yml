@@ -46,7 +46,7 @@ jobs:
               artifacts_url = run["artifacts_url"]
               artifacts = requests.get(artifacts_url, headers=headers).json().get("artifacts", [])
               for art in artifacts:
-                  if "fmcsa-output-batch" in art["name"]:
+                  if "output-batch" in art["name"]:
                       print(f"Downloading artifact: {art['name']} from run ID {run['id']}")
                       dl_url = art["archive_download_url"]
                       r = requests.get(dl_url, headers=headers, timeout=60)
@@ -80,7 +80,7 @@ jobs:
               print(f"Total rows after dropping duplicates: {len(final_df)}")
               
               os.makedirs("output", exist_ok=True)
-              final_df.to_csv("output/merged_fmcsa_data.csv", index=False)
+              final_df.to_csv("output/merged_data.csv", index=False)
               print(f"✅ Final merged CSV created with {len(final_df)} unique rows.")
           else:
               print("⚠️ No data found in any CSVs. Nothing to merge.")
@@ -90,7 +90,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add output/merged_fmcsa_data.csv
+          git add output/merged_data.csv
           git commit -m "chore: Update merged FMCSA data" || echo "No changes to commit"
           git push
 
