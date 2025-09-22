@@ -57,7 +57,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fmcsa-output-batch-${{ github.event.inputs.batch_index }}
+          name: output-batch-${{ github.event.inputs.batch_index }}
           path: output/*.csv
           if-no-files-found: ignore
           retention-days: 7
