@@ -100,4 +100,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Triggering cleanup workflow..."
-          gh workflow run fmcsa-cleanup.yml --ref main
+          gh workflow run cleanup.yml --ref main
