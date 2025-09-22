@@ -1,78 +1,59 @@
-name: FMCSA Extractor (Single Batch)
+name: 2. FMCSA Extractor (Single Batch)
 
 on:
   workflow_dispatch:
     inputs:
       batch_index:
-        description: 'Which batch to run (0-based)'
+        description: 'The index of the batch to process (e.g., 0, 1, 2)'
         required: true
-        default: '0'
-      batch_size:
-        description: 'Batch size'
-        required: false
-        default: '250'
       concurrency:
-        description: 'Parallel requests'
-        required: false
-        default: '8'
-      delay:
-        description: 'Delay between waves (ms)'
-        required: false
-        default: '1000'
-      wait_seconds:
-        description: 'Pause between batches (not used here)'
-        required: false
-        default: '0'
-      mode:
-        description: 'both (extract) or urls (only URLs)'
-        required: false
-        default: 'both'
+        description: 'Parallel requests for the extractor script'
+        required: true
+        default: '10'
 
 jobs:
-  run:
+  run-extraction: # Job ka naam 'run-extraction' rakha hai
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Download the specific batch file created by dispatcher
+        uses: actions/download-artifact@v4
+        with:
+          name: batch-files
+          path: .batches
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Create batch file from main list
+      - name: Prepare batch.txt for the script
         run: |
-          # Calculate the starting line number for this batch
-          START_LINE=$(( ${{ github.event.inputs.batch_index }} * ${{ github.event.inputs.batch_size }} + 1 ))
-          
-          # Extract the lines for the current batch and create batch.txt
-          tail -n +$START_LINE mc_list.txt | head -n ${{ github.event.inputs.batch_size }} > batch.txt
-          
-          echo "Created batch.txt for batch index ${{ github.event.inputs.batch_index }}"
-          echo "Batch content:"
-          cat batch.txt | head -n 5 # Sirf pehli 5 lines dikhao
-          
-      - name: Run extractor for this batch
+          # Find the correct batch file based on index
+          BATCH_FILE=$(ls .batches | sort | sed -n '${{ github.event.inputs.batch_index + 1 }}p')
+          if [ -z "$BATCH_FILE" ]; then
+            echo "::error::Batch file for index ${{ github.event.inputs.batch_index }} not found!"
+            exit 1
+          fi
+          # Copy the correct batch file to 'batch.txt' which the script reads
+          cp ".batches/$BATCH_FILE" ./batch.txt
+          echo "✅ Prepared batch.txt for index ${{ github.event.inputs.batch_index }}"
+
+      - name: Run the extractor script
         env:
-          MODE: ${{ github.event.inputs.mode }}
           CONCURRENCY: ${{ github.event.inputs.concurrency }}
-          DELAY: ${{ github.event.inputs.delay }}
-          BATCH_SIZE: ${{ github.event.inputs.batch_size }}
-          WAIT_SECONDS: ${{ github.event.inputs.wait_seconds }}
           BATCH_INDEX: ${{ github.event.inputs.batch_index }}
         run: |
-          node -v
           mkdir -p output
-          # Ab script hamesha batch.txt se parhegi
           node extractor.js
 
-      - name: Upload CSV artifacts
+      - name: Upload the resulting CSV as an artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          # Yeh naam ab dispatcher/merger se match karta hai
           name: fmcsa-output-batch-${{ github.event.inputs.batch_index }}
           path: output/*.csv
           if-no-files-found: ignore
-          # Retention period kam kar diya hai kyunke merge foran ho jayega
           retention-days: 1
