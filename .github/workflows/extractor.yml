@@ -25,6 +25,10 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install dependencies
+        # <<< YEH STEP ADD KIYA GAYA HAI
+        run: npm install
+
       - name: Create batch.txt for this specific job
         run: |
           START_LINE=$(( ${{ github.event.inputs.batch_index }} * ${{ github.event.inputs.batch_size }} + 1 ))
@@ -32,24 +36,20 @@ jobs:
           tail -n +$START_LINE mc_list.txt | head -n $BATCH_SIZE > batch.txt
           echo "✅ Created batch.txt for index ${{ github.event.inputs.batch_index }} with $(wc -l < batch.txt) lines."
 
-      - name: Run the extractor script and capture logs
-        # <<< YEH STEP UPDATE KIYA GAYA HAI
+      - name: Run the extractor script
         id: run_script
         env:
           CONCURRENCY: ${{ github.event.inputs.concurrency }}
           BATCH_INDEX: ${{ github.event.inputs.batch_index }}
         run: |
           mkdir -p output
-          # Script ki tamam output (console.log aur errors) ko run.log file mein save karein
-          node extractor.js > output/run.log 2>&1
+          node extractor.js
 
       - name: Upload logs and CSV as an artifact
-        # <<< YEH STEP UPDATE KIYA GAYA HAI
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fmcsa-output-batch-${{ github.event.inputs.batch_index }}
-          # Ab yeh poora output folder upload karega (CSV aur log file dono)
           path: output/
           if-no-files-found: ignore
           retention-days: 1
