@@ -14,7 +14,7 @@ on:
         required: true
 
 jobs:
-  run-extraction: # Job ka naam 'run-extraction' hai
+  run-extraction:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -27,21 +27,18 @@ jobs:
 
       - name: Create batch.txt for this specific job
         run: |
-          # Yeh script ab khud mc_list.txt se apne hisse ki lines nikalegi
           START_LINE=$(( ${{ github.event.inputs.batch_index }} * ${{ github.event.inputs.batch_size }} + 1 ))
           BATCH_SIZE=${{ github.event.inputs.batch_size }}
-          
           tail -n +$START_LINE mc_list.txt | head -n $BATCH_SIZE > batch.txt
-          
           echo "✅ Created batch.txt for index ${{ github.event.inputs.batch_index }} with $(wc -l < batch.txt) lines."
 
       - name: Run the extractor script
+        id: run_script
         env:
           CONCURRENCY: ${{ github.event.inputs.concurrency }}
           BATCH_INDEX: ${{ github.event.inputs.batch_index }}
         run: |
           mkdir -p output
-          # extractor.js ab hamesha batch.txt se data parhega
           node extractor.js
 
       - name: Upload the resulting CSV as an artifact
@@ -49,6 +46,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fmcsa-output-batch-${{ github.event.inputs.batch_index }}
-          path: output/*.csv
+          path: output/
           if-no-files-found: ignore
           retention-days: 1
