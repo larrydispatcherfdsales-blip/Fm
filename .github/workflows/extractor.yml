@@ -32,20 +32,24 @@ jobs:
           tail -n +$START_LINE mc_list.txt | head -n $BATCH_SIZE > batch.txt
           echo "✅ Created batch.txt for index ${{ github.event.inputs.batch_index }} with $(wc -l < batch.txt) lines."
 
-      - name: Run the extractor script
+      - name: Run the extractor script and capture logs
+        # <<< YEH STEP UPDATE KIYA GAYA HAI
         id: run_script
         env:
           CONCURRENCY: ${{ github.event.inputs.concurrency }}
           BATCH_INDEX: ${{ github.event.inputs.batch_index }}
         run: |
           mkdir -p output
-          node extractor.js
+          # Script ki tamam output (console.log aur errors) ko run.log file mein save karein
+          node extractor.js > output/run.log 2>&1
 
-      - name: Upload the resulting CSV as an artifact
+      - name: Upload logs and CSV as an artifact
+        # <<< YEH STEP UPDATE KIYA GAYA HAI
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fmcsa-output-batch-${{ github.event.inputs.batch_index }}
+          # Ab yeh poora output folder upload karega (CSV aur log file dono)
           path: output/
           if-no-files-found: ignore
           retention-days: 1
