@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Headless FMCSA extractor (Node + Actions)",
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
   "scripts": {
     "start": "node extractor.js"
   }
