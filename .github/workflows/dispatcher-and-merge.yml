@@ -20,8 +20,6 @@ jobs:
   # === JOB 1: Calculate batches and trigger extractor jobs ===
   dispatch:
     runs-on: ubuntu-latest
-    outputs:
-      run_id: ${{ github.run_id }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -60,9 +58,8 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
           check-name: 'run-extraction'
-          # <<< YEH LINE UPDATE KI GAYI HAI
-          repo-token: ${{ secrets.GH_PAT }} 
-          wait-interval: 60 # Intezar ka waqt 60 seconds kar diya hai
+          repo-token: ${{ secrets.GH_PAT }}
+          wait-interval: 60
           running-workflow-name: '2. FMCSA Extractor (Single Batch)'
           allowed-conclusions: success,skipped,failure,cancelled
 
@@ -82,15 +79,10 @@ jobs:
       - name: Install Python dependencies
         run: pip install pandas
 
-      - name: Download all artifacts from completed extractor runs
-        uses: dawidd6/action-download-artifact@v6
+      - name: Download all artifacts from this workflow run
+        uses: actions/download-artifact@v4
         with:
-          workflow: extractor.yml
-          name_is_regexp: true
-          name: fmcsa-output-batch-.*
-          path: ./artifacts
-          github_token: ${{ secrets.GH_PAT }} # Yahan bhi PAT istemal karna behtar hai
-          run_id: ${{ needs.dispatch.outputs.run_id }}
+          path: artifacts
 
       - name: Merge all downloaded CSVs
         id: merge_csv
@@ -100,12 +92,12 @@ jobs:
           path = "artifacts"
           csv_files = glob.glob(os.path.join(path, "**", "*.csv"), recursive=True)
           if not csv_files:
-              print("⚠️ No CSV files found to merge.")
+              print("⚠️ No CSV files found to merge. Exiting.")
               exit()
           print(f"Found {len(csv_files)} CSV files to merge.")
           all_dfs = [pd.read_csv(f, on_bad_lines='skip') for f in csv_files if os.path.getsize(f) > 0]
           if not all_dfs:
-              print("⚠️ All CSV files were empty or corrupt.")
+              print("⚠️ All CSV files were empty or corrupt. Exiting.")
               exit()
           final_df = pd.concat(all_dfs, ignore_index=True)
           final_df.drop_duplicates(subset=['mcNumber', 'email'], keep='first', inplace=True)
