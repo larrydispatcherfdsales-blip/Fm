@@ -29,7 +29,6 @@ jobs:
           TOTAL_LINES=$(wc -l < mc_list.txt)
           BATCH_COUNT=$(( (TOTAL_LINES + BATCH_SIZE - 1) / BATCH_SIZE ))
           echo "Total MCs: $TOTAL_LINES, Batch Size: $BATCH_SIZE, Total Batches: $BATCH_COUNT"
-          # Yeh line ek JSON array banati hai [0, 1, 2, ...]
           MATRIX_JSON=$(jq -c -n --argjson count "$BATCH_COUNT" '[range($count)]')
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
@@ -79,7 +78,6 @@ jobs:
   # === JOB 3: Saare results ko merge karna ===
   merge-and-commit:
     runs-on: ubuntu-latest
-    # Yeh job tab chalega jab 'run-extraction' ke saare matrix jobs complete ho jayenge
     needs: run-extraction
     steps:
       - name: Checkout repository to commit to
@@ -122,10 +120,14 @@ jobs:
           EOF
 
       - name: Commit and push the merged data file
+        # <<< YEH AAKHRI AUR FINAL UPDATE HAI
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Push karne se pehle pull karein taake remote changes haasil ho jayein
+          git pull
           git add output/merged_fmcsa_data.csv
+          # Check karein ke commit karne ke liye kuch hai ya nahi
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else
