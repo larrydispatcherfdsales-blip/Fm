@@ -1,22 +1,17 @@
-// FMCSA scraping headlessly (Node >= 18, global fetch).
-// Reads MCs from batch.txt (if present), otherwise mc_list.txt.
-// Outputs CSV to ./output/fmcsa_batch_<batchIndex>_<timestamp>.csv
-// Config via env vars: CONCURRENCY, DELAY, BATCH_SIZE, WAIT_SECONDS, MODE, BATCH_INDEX
-
 import fs from 'fs';
 import path from 'path';
-import fetch from 'node-fetch'; // <<< YEH LINE ADD KI GAYI HAI
+import fetch from 'node-fetch';
+import AbortController from 'abort-controller'; // <<< YEH LINE ADD KI GAYI HAI
 
 // ---- Config ----
 const CONCURRENCY = Number(process.env.CONCURRENCY || 4);
-const DELAY = Number(process.env.DELAY || 1000); // ms between waves
+const DELAY = Number(process.env.DELAY || 1000);
 const BATCH_SIZE = Number(process.env.BATCH_SIZE || 250);
-const WAIT_SECONDS = Number(process.env.WAIT_SECONDS || 0);
-const MODE = String(process.env.MODE || 'both'); // 'both' or 'urls'
 const BATCH_INDEX = Number(process.env.BATCH_INDEX || 0);
+const MODE = String(process.env.MODE || 'both');
 
-const EXTRACT_TIMEOUT_MS = 20000;
-const FETCH_TIMEOUT_MS = 20000;
+const EXTRACT_TIMEOUT_MS = 45000; // Timeout barha diya gaya hai
+const FETCH_TIMEOUT_MS = 30000;   // Timeout barha diya gaya hai
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 2000;
 
@@ -40,8 +35,12 @@ async function fetchWithTimeout(url, ms, opts = {}) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, { ...opts, signal: ctrl.signal });
-  } finally { clearTimeout(id); }
+    const resp = await fetch(url, { ...opts, signal: ctrl.signal });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp;
+  } finally {
+    clearTimeout(id);
+  }
 }
 
 async function fetchRetry(url, tries = MAX_RETRIES, timeout = FETCH_TIMEOUT_MS, label = 'fetch') {
@@ -49,7 +48,6 @@ async function fetchRetry(url, tries = MAX_RETRIES, timeout = FETCH_TIMEOUT_MS, 
   for (let i = 0; i < tries; i++) {
     try {
       const resp = await fetchWithTimeout(url, timeout, { redirect: 'follow' });
-      if (!resp.ok) throw new Error(`${label} HTTP ${resp.status}`);
       return await resp.text();
     } catch (err) {
       lastErr = err;
@@ -58,18 +56,12 @@ async function fetchRetry(url, tries = MAX_RETRIES, timeout = FETCH_TIMEOUT_MS, 
       await sleep(backoff);
     }
   }
-  throw lastErr || new Error(`${label} failed`);
+  throw lastErr || new Error(`${label} failed after ${tries} attempts`);
 }
 
 function htmlToText(s) {
   if (!s) return '';
-  return s.replace(/<[^>]*>/g, ' ')
-          .replace(/&nbsp;/g, ' ')
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/\s+/g, ' ')
-          .trim();
+  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
 }
 
 function extractPhoneAnywhere(html) {
@@ -78,18 +70,13 @@ function extractPhoneAnywhere(html) {
 }
 
 async function extractOne(url) {
-  const timer = setTimeout(() => { throw new Error('Extraction timed out'); }, EXTRACT_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
+
   try {
     const html = await fetchRetry(url, MAX_RETRIES, FETCH_TIMEOUT_MS, 'snapshot');
-
-    // MC number
     let mcNumber = '';
-    const pats = [
-      /MC[-\s]?(\d{3,7})/i,
-      /MC\/MX\/FF Number\(s\):\s*MC[-\s]?(\d{3,7})/i,
-      /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i,
-      /MC\/MX Number:\s*(\d{3,7})/i,
-    ];
+    const pats = [/MC[-\s]?(\d{3,7})/i, /MC\/MX\/FF Number\(s\):\s*MC[-\s]?(\d{3,7})/i, /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i, /MC\/MX Number:\s*(\d{3,7})/i];
     for (const p of pats) {
       const m = html.match(p);
       if (m && m[1]) { mcNumber = 'MC-' + m[1]; break; }
@@ -99,10 +86,7 @@ async function extractOne(url) {
       if (any && any[1]) mcNumber = 'MC-' + any[1];
     }
 
-    // Phone guess
     let phone = extractPhoneAnywhere(html);
-
-    // SMS / Registration for email
     let email = '';
     let smsLink = '';
     const hrefRe = /href=["']([^"']*(safer_xfr\.aspx|\/SMS\/)[^"']*)["']/ig;
@@ -132,7 +116,7 @@ async function extractOne(url) {
             const txt = htmlToText(s[1] || '');
             if (!foundEmail && /@/.test(txt)) foundEmail = txt;
             if (!foundPhone) {
-              const ph = txt.match(/\(?\d{3}\)?[\s\-]*\d{3}[\s\-]*\d{4}/);
+              const ph = txt.match(/\(?\d{3}\)?[\s\-]*\d{3}[-\s]*\d{4}/);
               if (ph) foundPhone = ph[0];
             }
           }
@@ -141,19 +125,20 @@ async function extractOne(url) {
             if (em) foundEmail = em[1];
           }
           if (!foundPhone) {
-            const ph2 = regHtml.match(/\(?\d{3}\)?[\s\-]*\d{3}[\s\-]*\d{4}/);
+            const ph2 = regHtml.match(/\(?\d{3}\)?[\s\-]*\d{3}[-\s]*\d{4}/);
             if (ph2) foundPhone = ph2[0];
           }
           email = foundEmail || '';
           if (foundPhone) phone = foundPhone;
         }
       } catch (e) {
-        console.log(`[${now()}] Deep fetch error: ${e?.message}`);
+        console.log(`[${now()}] Deep fetch error for ${url}: ${e?.message}`);
       }
     }
-
     return { email, mcNumber, phone, url };
-  } finally { clearTimeout(timer); }
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function handleMC(mc) {
@@ -177,7 +162,7 @@ async function handleMC(mc) {
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractOne(url);
-    console.log(`[${now()}] Saved → ${row.mcNumber || ''} | ${row.email || '(no email)'} | ${row.phone || ''}`);
+    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -193,12 +178,9 @@ async function run() {
 
   const raw = fs.readFileSync(INPUT_FILE, 'utf-8');
   const allMCs = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const mcList = allMCs; // Poori batch file process karein
 
-  const start = BATCH_INDEX * BATCH_SIZE;
-  const end = start + BATCH_SIZE;
-  const mcList = allMCs.slice(start, end);
-
-  console.log(`[${now()}] Total MCs: ${allMCs.length}, running batch ${BATCH_INDEX} → ${start}–${end - 1}, count=${mcList.length}`);
+  console.log(`[${now()}] Running batch index ${BATCH_INDEX} with ${mcList.length} MCs.`);
 
   if (mcList.length === 0) {
     console.log(`[${now()}] No MCs in this batch. Exiting.`);
@@ -210,6 +192,7 @@ async function run() {
 
   for (let i = 0; i < mcList.length; i += CONCURRENCY) {
     const slice = mcList.slice(i, i + CONCURRENCY);
+    console.log(`[${now()}] Processing slice ${i / CONCURRENCY + 1} (items ${i} to ${i + slice.length - 1})`);
     const results = await Promise.all(slice.map(handleMC));
     for (const r of results) {
       if (r?.valid) {
@@ -220,15 +203,18 @@ async function run() {
     await sleep(Math.max(50, DELAY));
   }
 
-  // Write CSV for this run
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-  const headers = ['email', 'mcNumber', 'phone', 'url'];
-  const csv = [headers.join(',')]
-    .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
-    .join('\n');
-  fs.writeFileSync(outCsv, csv);
-  console.log(`[${now()}] CSV written: ${outCsv} (rows=${rows.length})`);
+  if (rows.length > 0) {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
+    const headers = ['email', 'mcNumber', 'phone', 'url'];
+    const csv = [headers.join(',')]
+      .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
+      .join('\n');
+    fs.writeFileSync(outCsv, csv);
+    console.log(`[${now()}] ✅ CSV written: ${outCsv} (rows=${rows.length})`);
+  } else {
+    console.log(`[${now()}] ⚠️ No data extracted for this batch.`);
+  }
 
   if (MODE === 'urls' && validUrls.length) {
     const listPath = path.join(OUTPUT_DIR, `fmcsa_remaining_urls_${BATCH_INDEX}_${Date.now()}.txt`);
@@ -238,6 +224,6 @@ async function run() {
 }
 
 run().catch(e => {
-  console.error('Fatal:', e);
+  console.error('Fatal Error:', e);
   process.exit(1);
 });
