@@ -13,7 +13,7 @@ on:
         default: '10'
 
 permissions:
-  actions: write # 'write' permission zaroori hai takey 'wait-on-check-action' kaam kar sake
+  actions: write
   contents: write
 
 jobs:
@@ -31,14 +31,13 @@ jobs:
         run: |
           BATCH_SIZE=${{ github.event.inputs.batch_size }}
           TOTAL_LINES=$(wc -l < mc_list.txt)
-          # Correct batch count calculation
           BATCH_COUNT=$(( (TOTAL_LINES + BATCH_SIZE - 1) / BATCH_SIZE ))
           echo "count=$BATCH_COUNT" >> $GITHUB_OUTPUT
           echo "Total MCs: $TOTAL_LINES, Batch Size: $BATCH_SIZE, Total Batches to run: $BATCH_COUNT"
 
       - name: Trigger a workflow for each batch
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }} # <<< YEH LINE UPDATE KI GAYI HAI
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           TOTAL_BATCHES: ${{ steps.calculate_batches.outputs.count }}
         run: |
           for (( i=0; i<$TOTAL_BATCHES; i++ )); do
@@ -48,7 +47,7 @@ jobs:
               -f batch_index=$i \
               -f batch_size=${{ github.event.inputs.batch_size }} \
               -f concurrency=${{ github.event.inputs.concurrency }}
-            sleep 2 # Avoid API rate limits
+            sleep 2
           done
 
   # === JOB 2: Wait for all extractor jobs to finish ===
@@ -61,8 +60,9 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
           check-name: 'run-extraction'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 30 # 30 seconds
+          # <<< YEH LINE UPDATE KI GAYI HAI
+          repo-token: ${{ secrets.GH_PAT }} 
+          wait-interval: 60 # Intezar ka waqt 60 seconds kar diya hai
           running-workflow-name: '2. FMCSA Extractor (Single Batch)'
           allowed-conclusions: success,skipped,failure,cancelled
 
@@ -89,7 +89,7 @@ jobs:
           name_is_regexp: true
           name: fmcsa-output-batch-.*
           path: ./artifacts
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GH_PAT }} # Yahan bhi PAT istemal karna behtar hai
           run_id: ${{ needs.dispatch.outputs.run_id }}
 
       - name: Merge all downloaded CSVs
@@ -98,12 +98,9 @@ jobs:
           python - <<'EOF'
           import os, glob, pandas as pd
           path = "artifacts"
-          # Artifacts ab 'fmcsa-output-batch-0', 'fmcsa-output-batch-1' etc. naam ke folders mein aayenge
           csv_files = glob.glob(os.path.join(path, "**", "*.csv"), recursive=True)
           if not csv_files:
-              print("⚠️ No CSV files found to merge. Creating empty output file.")
-              os.makedirs("output", exist_ok=True)
-              with open("output/merged_fmcsa_data.csv", "w") as f: f.write("email,mcNumber,phone,url\n")
+              print("⚠️ No CSV files found to merge.")
               exit()
           print(f"Found {len(csv_files)} CSV files to merge.")
           all_dfs = [pd.read_csv(f, on_bad_lines='skip') for f in csv_files if os.path.getsize(f) > 0]
@@ -111,9 +108,7 @@ jobs:
               print("⚠️ All CSV files were empty or corrupt.")
               exit()
           final_df = pd.concat(all_dfs, ignore_index=True)
-          print(f"Total rows before dropping duplicates: {len(final_df)}")
           final_df.drop_duplicates(subset=['mcNumber', 'email'], keep='first', inplace=True)
-          print(f"Total rows after dropping duplicates: {len(final_df)}")
           output_path = "output/merged_fmcsa_data.csv"
           os.makedirs("output", exist_ok=True)
           final_df.to_csv(output_path, index=False)
