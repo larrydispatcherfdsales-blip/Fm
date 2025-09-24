@@ -10,7 +10,7 @@ on:
       concurrency:
         description: 'Parallel requests inside each batch'
         required: true
-        default: '10'
+        default: '4' # Default concurrency kam kar di hai
 
 permissions:
   actions: write
@@ -83,13 +83,14 @@ jobs:
         run: pip install pandas
 
       - name: Download all artifacts from child workflow runs
-        # <<< YEH POORA STEP UPDATE KIYA GAYA HAI
+        # <<< YEH AAKHRI AUR FINAL UPDATE HAI
         uses: dawidd6/action-download-artifact@v6
         with:
           # Hum 'extractor.yml' workflow ke artifacts dhoond rahe hain
           workflow: extractor.yml
-          # Hum is parent workflow run ke trigger kiye gaye child runs se download kar rahe hain
-          run_id: ${{ needs.dispatch.outputs.parent_run_id }}
+          # Hum is parent workflow ke trigger kiye gaye child runs se download kar rahe hain
+          # Iske liye 'run_id' ke bajaye 'workflow_run_id' ka istemal hota hai
+          workflow_run_id: ${{ needs.dispatch.outputs.parent_run_id }}
           # Token zaroori hai doosre runs ko access karne ke liye
           github_token: ${{ secrets.GH_PAT }}
           path: artifacts
@@ -104,12 +105,12 @@ jobs:
           csv_files = glob.glob(os.path.join(path, "**", "*.csv"), recursive=True)
           if not csv_files:
               print("⚠️ No CSV files found to merge. Please check the child workflow artifacts.")
-              exit(1) # Error ke saath exit karein
+              exit(1)
           print(f"Found {len(csv_files)} CSV files to merge.")
           all_dfs = [pd.read_csv(f, on_bad_lines='skip') for f in csv_files if os.path.getsize(f) > 0]
           if not all_dfs:
               print("⚠️ All CSV files were empty or corrupt.")
-              exit(1) # Error ke saath exit karein
+              exit(1)
           final_df = pd.concat(all_dfs, ignore_index=True)
           final_df.drop_duplicates(subset=['mcNumber', 'email'], keep='first', inplace=True)
           output_path = "output/merged_fmcsa_data.csv"
