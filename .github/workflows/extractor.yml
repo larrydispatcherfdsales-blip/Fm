@@ -26,7 +26,6 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        # <<< YEH STEP ADD KIYA GAYA HAI
         run: npm install
 
       - name: Create batch.txt for this specific job
@@ -45,11 +44,11 @@ jobs:
           mkdir -p output
           node extractor.js
 
-      - name: Upload logs and CSV as an artifact
+      - name: Upload CSV artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fmcsa-output-batch-${{ github.event.inputs.batch_index }}
-          path: output/
+          path: output/*.csv
           if-no-files-found: ignore
           retention-days: 1
