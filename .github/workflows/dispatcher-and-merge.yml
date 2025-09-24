@@ -6,14 +6,14 @@ on:
       batch_size:
         description: 'Number of MCs per batch'
         required: true
-        default: '250' # Default 250 kar diya hai
+        default: '250'
       concurrency:
         description: 'Parallel requests inside each batch'
         required: true
         default: '10'
 
 permissions:
-  actions: read # Sirf read permission zaroori hai
+  actions: write # 'write' permission zaroori hai takey 'wait-on-check-action' kaam kar sake
   contents: write
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
 
       - name: Trigger a workflow for each batch
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }} # <<< YEH LINE UPDATE KI GAYI HAI
           TOTAL_BATCHES: ${{ steps.calculate_batches.outputs.count }}
         run: |
           for (( i=0; i<$TOTAL_BATCHES; i++ )); do
@@ -86,8 +86,7 @@ jobs:
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: extractor.yml
-          # === YEH LINE THEEK KI GAYI HAI ===
-          name_is_regexp: true # Isko true karna zaroori hai
+          name_is_regexp: true
           name: fmcsa-output-batch-.*
           path: ./artifacts
           github_token: ${{ secrets.GITHUB_TOKEN }}
