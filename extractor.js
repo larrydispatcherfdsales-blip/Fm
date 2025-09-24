@@ -1,4 +1,3 @@
-// ===== extractor.js =====
 // FMCSA scraping headlessly (Node >= 18, global fetch).
 // Reads MCs from batch.txt (if present), otherwise mc_list.txt.
 // Outputs CSV to ./output/fmcsa_batch_<batchIndex>_<timestamp>.csv
@@ -6,6 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import fetch from 'node-fetch'; // <<< YEH LINE ADD KI GAYI HAI
 
 // ---- Config ----
 const CONCURRENCY = Number(process.env.CONCURRENCY || 4);
@@ -29,7 +29,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function mcToSnapshotUrl(mc) {
   const m = String(mc || '').replace(/\s+/g, '');
-  return `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=MC_MX&query_string=${encodeURIComponent(m)}`;
+  return `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=MC_MX&query_string=${encodeURIComponent(m )}`;
 }
 
 function absoluteUrl(base, href) {
