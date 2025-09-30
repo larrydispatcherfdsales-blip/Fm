@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
-import AbortController from 'abort-controller'; // <<< YEH LINE ADD KI GAYI HAI
+import AbortController from 'abort-controller';
 
 // ---- Config ----
 const CONCURRENCY = Number(process.env.CONCURRENCY || 4);
@@ -10,8 +10,8 @@ const BATCH_SIZE = Number(process.env.BATCH_SIZE || 250);
 const BATCH_INDEX = Number(process.env.BATCH_INDEX || 0);
 const MODE = String(process.env.MODE || 'both');
 
-const EXTRACT_TIMEOUT_MS = 45000; // Timeout barha diya gaya hai
-const FETCH_TIMEOUT_MS = 30000;   // Timeout barha diya gaya hai
+const EXTRACT_TIMEOUT_MS = 45000;
+const FETCH_TIMEOUT_MS = 30000;
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 2000;
 
@@ -75,6 +75,15 @@ async function extractOne(url) {
 
   try {
     const html = await fetchRetry(url, MAX_RETRIES, FETCH_TIMEOUT_MS, 'snapshot');
+    
+    // --- COMPANY NAME EXTRACTION START ---
+    let companyName = '';
+    const nameMatch = html.match(/Legal Name:<\/th>\s*<td[^>]*>([^<]+)</i);
+    if (nameMatch && nameMatch[1]) {
+        companyName = htmlToText(nameMatch[1]);
+    }
+    // --- COMPANY NAME EXTRACTION END ---
+
     let mcNumber = '';
     const pats = [/MC[-\s]?(\d{3,7})/i, /MC\/MX\/FF Number\(s\):\s*MC[-\s]?(\d{3,7})/i, /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i, /MC\/MX Number:\s*(\d{3,7})/i];
     for (const p of pats) {
@@ -135,7 +144,8 @@ async function extractOne(url) {
         console.log(`[${now()}] Deep fetch error for ${url}: ${e?.message}`);
       }
     }
-    return { email, mcNumber, phone, url };
+    // Return object mein companyName shamil karein
+    return { companyName, email, mcNumber, phone, url };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -162,7 +172,7 @@ async function handleMC(mc) {
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractOne(url);
-    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
+    console.log(`[${now()}] Saved → ${row.companyName || '(no name)'} | ${row.mcNumber || mc} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -178,7 +188,7 @@ async function run() {
 
   const raw = fs.readFileSync(INPUT_FILE, 'utf-8');
   const allMCs = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  const mcList = allMCs; // Poori batch file process karein
+  const mcList = allMCs;
 
   console.log(`[${now()}] Running batch index ${BATCH_INDEX} with ${mcList.length} MCs.`);
 
@@ -206,7 +216,8 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    const headers = ['email', 'mcNumber', 'phone', 'url'];
+    // Headers mein companyName shamil karein
+    const headers = ['companyName', 'email', 'mcNumber', 'phone', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
       .join('\n');
