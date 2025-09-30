@@ -3,9 +3,11 @@ import path from 'path';
 import fetch from 'node-fetch';
 import AbortController from 'abort-controller';
 
-// ---- Config ----
-const CONCURRENCY = Number(process.env.CONCURRENCY || 4);
-const DELAY = Number(process.env.DELAY || 1000);
+// ---- Config (FINAL UPDATE) ----
+// CONCURRENCY ko 4 se 2 kar diya gaya hai taake server block na kare.
+const CONCURRENCY = Number(process.env.CONCURRENCY || 2);
+// DELAY ko 1500ms se 2500ms kar diya gaya hai.
+const DELAY = Number(process.env.DELAY || 2500);
 const BATCH_SIZE = Number(process.env.BATCH_SIZE || 250);
 const BATCH_INDEX = Number(process.env.BATCH_INDEX || 0);
 const MODE = String(process.env.MODE || 'both');
@@ -61,7 +63,8 @@ async function fetchRetry(url, tries = MAX_RETRIES, timeout = FETCH_TIMEOUT_MS, 
 
 function htmlToText(s) {
   if (!s) return '';
-  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+  // &nbsp; ko space se replace karein aur extra spaces hatayein
+  return s.replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function extractPhoneAnywhere(html) {
@@ -76,13 +79,12 @@ async function extractOne(url) {
   try {
     const html = await fetchRetry(url, MAX_RETRIES, FETCH_TIMEOUT_MS, 'snapshot');
     
-    // --- COMPANY NAME EXTRACTION START ---
     let companyName = '';
-    const nameMatch = html.match(/Legal Name:<\/th>\s*<td[^>]*>([^<]+)</i);
+    // Yeh wohi regex hai jo aapke diye gaye HTML structure se match karta hai
+    const nameMatch = html.match(/Legal Name:<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
     if (nameMatch && nameMatch[1]) {
         companyName = htmlToText(nameMatch[1]);
     }
-    // --- COMPANY NAME EXTRACTION END ---
 
     let mcNumber = '';
     const pats = [/MC[-\s]?(\d{3,7})/i, /MC\/MX\/FF Number\(s\):\s*MC[-\s]?(\d{3,7})/i, /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i, /MC\/MX Number:\s*(\d{3,7})/i];
@@ -144,7 +146,6 @@ async function extractOne(url) {
         console.log(`[${now()}] Deep fetch error for ${url}: ${e?.message}`);
       }
     }
-    // Return object mein companyName shamil karein
     return { companyName, email, mcNumber, phone, url };
   } finally {
     clearTimeout(timeoutId);
@@ -190,7 +191,7 @@ async function run() {
   const allMCs = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   const mcList = allMCs;
 
-  console.log(`[${now()}] Running batch index ${BATCH_INDEX} with ${mcList.length} MCs.`);
+  console.log(`[${now()}] Running with CONCURRENCY=${CONCURRENCY} and DELAY=${DELAY}ms.`);
 
   if (mcList.length === 0) {
     console.log(`[${now()}] No MCs in this batch. Exiting.`);
@@ -202,7 +203,7 @@ async function run() {
 
   for (let i = 0; i < mcList.length; i += CONCURRENCY) {
     const slice = mcList.slice(i, i + CONCURRENCY);
-    console.log(`[${now()}] Processing slice ${i / CONCURRENCY + 1} (items ${i} to ${i + slice.length - 1})`);
+    console.log(`[${now()}] Processing slice ${Math.floor(i / CONCURRENCY) + 1} (items ${i} to ${i + slice.length - 1})`);
     const results = await Promise.all(slice.map(handleMC));
     for (const r of results) {
       if (r?.valid) {
@@ -216,7 +217,6 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    // Headers mein companyName shamil karein
     const headers = ['companyName', 'email', 'mcNumber', 'phone', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
