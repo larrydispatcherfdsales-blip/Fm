@@ -3,15 +3,17 @@ import path from 'path';
 import fetch from 'node-fetch';
 import AbortController from 'abort-controller';
 
-// ---- Config ----
-const CONCURRENCY = Number(process.env.CONCURRENCY || 4);
-const DELAY = Number(process.env.DELAY || 1000);
+// ---- Config (FINAL SETTINGS FOR GUARANTEED WORKING) ----
+// Raftaar kam ki gayi hai taake server block na kare aur data sahi se mile.
+const CONCURRENCY = Number(process.env.CONCURRENCY || 2);
+const DELAY = Number(process.env.DELAY || 2000); // 2 seconds ka waqfa
+
 const BATCH_SIZE = Number(process.env.BATCH_SIZE || 250);
 const BATCH_INDEX = Number(process.env.BATCH_INDEX || 0);
 const MODE = String(process.env.MODE || 'both');
 
-const EXTRACT_TIMEOUT_MS = 45000; // Timeout barha diya gaya hai
-const FETCH_TIMEOUT_MS = 30000;   // Timeout barha diya gaya hai
+const EXTRACT_TIMEOUT_MS = 45000;
+const FETCH_TIMEOUT_MS = 30000;
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 2000;
 
@@ -24,7 +26,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function mcToSnapshotUrl(mc) {
   const m = String(mc || '').replace(/\s+/g, '');
-  return `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=MC_MX&query_string=${encodeURIComponent(m)}`;
+  return `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=MC_MX&query_string=${encodeURIComponent(m )}`;
 }
 
 function absoluteUrl(base, href) {
@@ -61,25 +63,12 @@ async function fetchRetry(url, tries = MAX_RETRIES, timeout = FETCH_TIMEOUT_MS, 
 
 function htmlToText(s) {
   if (!s) return '';
-  return s.replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return s.replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function extractPhoneAnywhere(html) {
   const m = html.match(/\(?\d{3}\)?[\s\-.]*\d{3}[\s\-.]*\d{4}/);
   return m ? m[0] : '';
-}
-
-// 🆕 Extract company name
-function extractCompanyName(html) {
-  const m = html.match(/<td[^>]*class=["']queryfield["'][^>]*>(.*?)<\/td>/i);
-  if (m) return htmlToText(m[1]);
-  return '';
 }
 
 async function extractOne(url) {
@@ -88,17 +77,16 @@ async function extractOne(url) {
 
   try {
     const html = await fetchRetry(url, MAX_RETRIES, FETCH_TIMEOUT_MS, 'snapshot');
-
-    // 🆕 Company name extract
-    const companyName = extractCompanyName(html);
+    
+    // ✅ COMPANY NAME NIKALNE KA SAHI CODE
+    let companyName = '';
+    const nameMatch = html.match(/Legal Name:<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
+    if (nameMatch && nameMatch[1]) {
+        companyName = htmlToText(nameMatch[1]);
+    }
 
     let mcNumber = '';
-    const pats = [
-      /MC[-\s]?(\d{3,7})/i,
-      /MC\/MX\/FF Number\(s\):\s*MC[-\s]?(\d{3,7})/i,
-      /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i,
-      /MC\/MX Number:\s*(\d{3,7})/i
-    ];
+    const pats = [/MC[-\s]?(\d{3,7})/i, /MC\/MX\/FF Number\(s\):\s*MC[-\s]?(\d{3,7})/i, /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i, /MC\/MX Number:\s*(\d{3,7})/i];
     for (const p of pats) {
       const m = html.match(p);
       if (m && m[1]) { mcNumber = 'MC-' + m[1]; break; }
@@ -136,7 +124,7 @@ async function extractOne(url) {
           let s;
           while ((s = spanRe.exec(regHtml)) !== null) {
             const txt = htmlToText(s[1] || '');
-            if (!foundEmail && /@/.test(txt)) foundEmail = txt;
+            if (!foundEmail && /@/.test(txt)) foundEmail = txt.split(' ')[0]; // Sirf pehla email uthaye
             if (!foundPhone) {
               const ph = txt.match(/\(?\d{3}\)?[\s\-]*\d{3}[-\s]*\d{4}/);
               if (ph) foundPhone = ph[0];
@@ -157,7 +145,7 @@ async function extractOne(url) {
         console.log(`[${now()}] Deep fetch error for ${url}: ${e?.message}`);
       }
     }
-    return { email, mcNumber, phone, url, companyName }; // 🆕 companyName add
+    return { companyName, email, mcNumber, phone, url };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -184,7 +172,7 @@ async function handleMC(mc) {
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractOne(url);
-    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.companyName || '(no name)'} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
+    console.log(`[${now()}] Saved → ${row.companyName || '(no name)'} | ${row.mcNumber || mc} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -202,7 +190,7 @@ async function run() {
   const allMCs = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   const mcList = allMCs;
 
-  console.log(`[${now()}] Running batch index ${BATCH_INDEX} with ${mcList.length} MCs.`);
+  console.log(`[${now()}] Running with CONCURRENCY=${CONCURRENCY} and DELAY=${DELAY}ms.`);
 
   if (mcList.length === 0) {
     console.log(`[${now()}] No MCs in this batch. Exiting.`);
@@ -214,7 +202,7 @@ async function run() {
 
   for (let i = 0; i < mcList.length; i += CONCURRENCY) {
     const slice = mcList.slice(i, i + CONCURRENCY);
-    console.log(`[${now()}] Processing slice ${i / CONCURRENCY + 1} (items ${i} to ${i + slice.length - 1})`);
+    console.log(`[${now()}] Processing slice ${Math.floor(i / CONCURRENCY) + 1} (items ${i} to ${i + slice.length - 1})`);
     const results = await Promise.all(slice.map(handleMC));
     for (const r of results) {
       if (r?.valid) {
@@ -228,7 +216,8 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    const headers = ['email', 'mcNumber', 'phone', 'url', 'companyName']; // 🆕 header updated
+    // ✅ Headers mein companyName pehle number par hai
+    const headers = ['companyName', 'email', 'mcNumber', 'phone', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
       .join('\n');
