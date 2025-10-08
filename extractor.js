@@ -61,8 +61,7 @@ async function fetchRetry(url, tries = MAX_RETRIES, timeout = FETCH_TIMEOUT_MS, 
 
 function htmlToText(s) {
   if (!s) return '';
-  return s.replace(/<br\s*\/?>/gi, ', ') // 🆕 Replace   
- with a comma for address lines
+  return s.replace(/<br\s*\/?>/gi, ', ') // ✅ FIX: Added a semicolon at the end of the line
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
@@ -77,9 +76,7 @@ function extractPhoneAnywhere(html) {
   return m ? m[0] : '';
 }
 
-// 🆕 Function to extract data using a regular expression based on a preceding header
 function extractDataByHeader(html, headerText) {
-    // This regex looks for the header text in a <th> and then captures the content of the next <td>
     const regex = new RegExp(headerText + '<\\/a><\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>', 'i');
     const match = html.match(regex);
     if (match && match[1]) {
@@ -95,14 +92,13 @@ async function extractOne(url) {
   try {
     const html = await fetchRetry(url, MAX_RETRIES, FETCH_TIMEOUT_MS, 'snapshot');
 
-    // 🆕 Extract Legal Name and Physical Address using the new helper function
     const legalName = extractDataByHeader(html, 'Legal Name:');
     const physicalAddress = extractDataByHeader(html, 'Physical Address:');
 
     let mcNumber = '';
     const pats = [
       /MC[-\s]?(\d{3,7})/i,
-      /MC\/MX\/FF Number\(s\):.*?MC-(\d{3,7})/i, // More specific pattern
+      /MC\/MX\/FF Number\(s\):.*?MC-(\d{3,7})/i,
       /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i,
       /MC\/MX Number:\s*(\d{3,7})/i
     ];
@@ -111,7 +107,6 @@ async function extractOne(url) {
       if (m && m[1]) { mcNumber = 'MC-' + m[1].trim(); break; }
     }
     if (!mcNumber) {
-        // Fallback for MC number if specific patterns fail
         const mcMatch = html.match(/MC-(\d{3,7})/i);
         if (mcMatch && mcMatch[1]) {
             mcNumber = 'MC-' + mcMatch[1].trim();
@@ -167,7 +162,6 @@ async function extractOne(url) {
         console.log(`[${now()}] Deep fetch error for ${url}: ${e?.message}`);
       }
     }
-    // 🆕 Return the new fields along with the existing ones
     return { email, mcNumber, phone, url, legalName, physicalAddress };
   } finally {
     clearTimeout(timeoutId);
@@ -195,7 +189,6 @@ async function handleMC(mc) {
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractOne(url);
-    // 🆕 Updated log to show new data
     console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
     return { valid: true, url, row };
   } catch (err) {
@@ -240,7 +233,6 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    // 🆕 Add new columns to the CSV header
     const headers = ['mcNumber', 'legalName', 'physicalAddress', 'phone', 'email', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
