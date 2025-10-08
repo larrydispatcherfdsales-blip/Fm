@@ -10,8 +10,8 @@ const BATCH_SIZE = Number(process.env.BATCH_SIZE || 250);
 const BATCH_INDEX = Number(process.env.BATCH_INDEX || 0);
 const MODE = String(process.env.MODE || 'both');
 
-const EXTRACT_TIMEOUT_MS = 45000; // Timeout barha diya gaya hai
-const FETCH_TIMEOUT_MS = 30000;   // Timeout barha diya gaya hai
+const EXTRACT_TIMEOUT_MS = 45000;
+const FETCH_TIMEOUT_MS = 30000;
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 2000;
 
@@ -24,7 +24,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function mcToSnapshotUrl(mc) {
   const m = String(mc || '').replace(/\s+/g, '');
-  return `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=MC_MX&query_string=${encodeURIComponent(m)}`;
+  return `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=MC_MX&query_string=${encodeURIComponent(m )}`;
 }
 
 function absoluteUrl(base, href) {
@@ -61,7 +61,9 @@ async function fetchRetry(url, tries = MAX_RETRIES, timeout = FETCH_TIMEOUT_MS, 
 
 function htmlToText(s) {
   if (!s) return '';
-  return s.replace(/<[^>]*>/g, ' ')
+  return s.replace(/<br\s*\/?>/gi, ', ') // 🆕 Replace   
+ with a comma for address lines
+    .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -75,11 +77,15 @@ function extractPhoneAnywhere(html) {
   return m ? m[0] : '';
 }
 
-// 🆕 Extract company name
-function extractCompanyName(html) {
-  const m = html.match(/<td[^>]*class=["']queryfield["'][^>]*>(.*?)<\/td>/i);
-  if (m) return htmlToText(m[1]);
-  return '';
+// 🆕 Function to extract data using a regular expression based on a preceding header
+function extractDataByHeader(html, headerText) {
+    // This regex looks for the header text in a <th> and then captures the content of the next <td>
+    const regex = new RegExp(headerText + '<\\/a><\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>', 'i');
+    const match = html.match(regex);
+    if (match && match[1]) {
+        return htmlToText(match[1]);
+    }
+    return '';
 }
 
 async function extractOne(url) {
@@ -89,23 +95,27 @@ async function extractOne(url) {
   try {
     const html = await fetchRetry(url, MAX_RETRIES, FETCH_TIMEOUT_MS, 'snapshot');
 
-    // 🆕 Company name extract
-    const companyName = extractCompanyName(html);
+    // 🆕 Extract Legal Name and Physical Address using the new helper function
+    const legalName = extractDataByHeader(html, 'Legal Name:');
+    const physicalAddress = extractDataByHeader(html, 'Physical Address:');
 
     let mcNumber = '';
     const pats = [
       /MC[-\s]?(\d{3,7})/i,
-      /MC\/MX\/FF Number\(s\):\s*MC[-\s]?(\d{3,7})/i,
+      /MC\/MX\/FF Number\(s\):.*?MC-(\d{3,7})/i, // More specific pattern
       /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i,
       /MC\/MX Number:\s*(\d{3,7})/i
     ];
     for (const p of pats) {
       const m = html.match(p);
-      if (m && m[1]) { mcNumber = 'MC-' + m[1]; break; }
+      if (m && m[1]) { mcNumber = 'MC-' + m[1].trim(); break; }
     }
     if (!mcNumber) {
-      const any = html.match(/MC[-\s]?(\d{3,7})/i);
-      if (any && any[1]) mcNumber = 'MC-' + any[1];
+        // Fallback for MC number if specific patterns fail
+        const mcMatch = html.match(/MC-(\d{3,7})/i);
+        if (mcMatch && mcMatch[1]) {
+            mcNumber = 'MC-' + mcMatch[1].trim();
+        }
     }
 
     let phone = extractPhoneAnywhere(html);
@@ -157,7 +167,8 @@ async function extractOne(url) {
         console.log(`[${now()}] Deep fetch error for ${url}: ${e?.message}`);
       }
     }
-    return { email, mcNumber, phone, url, companyName }; // 🆕 companyName add
+    // 🆕 Return the new fields along with the existing ones
+    return { email, mcNumber, phone, url, legalName, physicalAddress };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -184,7 +195,8 @@ async function handleMC(mc) {
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractOne(url);
-    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.companyName || '(no name)'} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
+    // 🆕 Updated log to show new data
+    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -228,7 +240,8 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    const headers = ['email', 'mcNumber', 'phone', 'url', 'companyName']; // 🆕 header updated
+    // 🆕 Add new columns to the CSV header
+    const headers = ['mcNumber', 'legalName', 'physicalAddress', 'phone', 'email', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
       .join('\n');
