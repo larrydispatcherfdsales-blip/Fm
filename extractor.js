@@ -72,6 +72,7 @@ function htmlToText(s) {
 }
 
 function extractDataByHeader(html, headerText) {
+    // ✅ Updated Regex to be more flexible with colspan and other attributes
     const regex = new RegExp(headerText + '<\\/a><\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>', 'i');
     const match = html.match(regex);
     if (match && match[1]) {
@@ -93,11 +94,8 @@ function parseAddress(addressString) {
     return { city: '', state: '', zip: '' };
 }
 
-// ✅ FIX: Improved function to reliably detect Operation and Cargo types
 function getOperationType(html) {
     const types = [];
-    
-    // Regex to find a cell with 'X' and capture the text in the next cell
     const findXRegex = /<td class="queryfield"[^>]*>X<\/td>\s*<td><font[^>]+>([^<]+)<\/font><\/td>/gi;
     
     let match;
@@ -107,12 +105,11 @@ function getOperationType(html) {
             types.push('Property');
         } else if (typeText.toLowerCase() === 'passengers') {
             types.push('Passenger');
-        } else if (typeText.toLowerCase() === 'broker') { // Assuming 'Broker' text exists
+        } else if (typeText.toLowerCase() === 'broker') {
              types.push('Broker');
         }
     }
 
-    // If no specific type is found from Operation Classification, check Cargo Carried as a fallback for Passenger
     if (!types.includes('Passenger')) {
         const cargoRegex = /<td class="queryfield"[^>]*>X<\/td>\s*<td><font[^>]+>Passengers<\/font><\/td>/i;
         if (cargoRegex.test(html)) {
@@ -120,17 +117,19 @@ function getOperationType(html) {
         }
     }
 
-    // Remove duplicates and join
     return [...new Set(types)].join(' | ');
 }
 
 
 async function extractAllData(url, html) {
+    // 🆕 Extract Entity Type
+    const entityType = extractDataByHeader(html, 'Entity Type:');
+
     const legalName = extractDataByHeader(html, 'Legal Name:');
     const physicalAddress = extractDataByHeader(html, 'Physical Address:');
     const mailingAddress = extractDataByHeader(html, 'Mailing Address:');
     const { city, state, zip } = parseAddress(mailingAddress || physicalAddress);
-    const operationType = getOperationType(html); // ✅ This will now work correctly
+    const operationType = getOperationType(html);
 
     let mcNumber = '';
     const mcMatch = html.match(/MC-?(\d{3,7})/i);
@@ -160,7 +159,8 @@ async function extractAllData(url, html) {
         }
     }
 
-    return { email, mcNumber, phone, url, legalName, physicalAddress, mailingAddress, city, state, zip, operationType };
+    // 🆕 Add entityType to the returned object
+    return { entityType, email, mcNumber, phone, url, legalName, physicalAddress, mailingAddress, city, state, zip, operationType };
 }
 
 async function handleMC(mc) {
@@ -196,7 +196,8 @@ async function handleMC(mc) {
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractAllData(url, html);
-    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | Type: ${row.operationType || 'N/A'} | Location: ${row.city}, ${row.state}`);
+    // 🆕 Updated console log to show Entity Type
+    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | Entity: ${row.entityType} | Type: ${row.operationType || 'N/A'} | Location: ${row.city}, ${row.state}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -240,7 +241,8 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    const headers = ['mcNumber', 'legalName', 'operationType', 'phone', 'email', 'physicalAddress', 'mailingAddress', 'city', 'state', 'zip', 'url'];
+    // 🆕 Added 'entityType' to the CSV headers
+    const headers = ['mcNumber', 'legalName', 'entityType', 'operationType', 'phone', 'email', 'physicalAddress', 'mailingAddress', 'city', 'state', 'zip', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
       .join('\n');
