@@ -71,11 +71,6 @@ function htmlToText(s) {
     .trim();
 }
 
-function extractPhoneAnywhere(html) {
-  const m = html.match(/\(?\d{3}\)?[\s\-.]*\d{3}[\s\-.]*\d{4}/);
-  return m ? m[0] : '';
-}
-
 function extractDataByHeader(html, headerText) {
     const regex = new RegExp(headerText + '<\\/a><\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>', 'i');
     const match = html.match(regex);
@@ -98,26 +93,44 @@ function parseAddress(addressString) {
     return { city: '', state: '', zip: '' };
 }
 
+// ✅ FIX: Improved function to reliably detect Operation and Cargo types
 function getOperationType(html) {
     const types = [];
-    if (html.includes('>X</td>\n                   <td><font style="font-size:80%" face="arial">Auth. For Hire')) {
-        types.push('Property');
+    
+    // Regex to find a cell with 'X' and capture the text in the next cell
+    const findXRegex = /<td class="queryfield"[^>]*>X<\/td>\s*<td><font[^>]+>([^<]+)<\/font><\/td>/gi;
+    
+    let match;
+    while ((match = findXRegex.exec(html)) !== null) {
+        const typeText = match[1].trim();
+        if (typeText.toLowerCase() === 'auth. for hire') {
+            types.push('Property');
+        } else if (typeText.toLowerCase() === 'passengers') {
+            types.push('Passenger');
+        } else if (typeText.toLowerCase() === 'broker') { // Assuming 'Broker' text exists
+             types.push('Broker');
+        }
     }
-    if (html.includes('>X</td>\n                   <td><font style="font-size:80%" face="arial">Broker')) {
-        types.push('Broker');
+
+    // If no specific type is found from Operation Classification, check Cargo Carried as a fallback for Passenger
+    if (!types.includes('Passenger')) {
+        const cargoRegex = /<td class="queryfield"[^>]*>X<\/td>\s*<td><font[^>]+>Passengers<\/font><\/td>/i;
+        if (cargoRegex.test(html)) {
+            types.push('Passenger');
+        }
     }
-    if (html.includes('>X</td>\n                   <td><font style="font-size:80%" face="arial">Passengers')) {
-        types.push('Passenger');
-    }
-    return types.join(' | ');
+
+    // Remove duplicates and join
+    return [...new Set(types)].join(' | ');
 }
+
 
 async function extractAllData(url, html) {
     const legalName = extractDataByHeader(html, 'Legal Name:');
     const physicalAddress = extractDataByHeader(html, 'Physical Address:');
     const mailingAddress = extractDataByHeader(html, 'Mailing Address:');
-    const { city, state, zip } = parseAddress(mailingAddress || physicalAddress); // ✅ Fallback to physical address if mailing is empty
-    const operationType = getOperationType(html);
+    const { city, state, zip } = parseAddress(mailingAddress || physicalAddress);
+    const operationType = getOperationType(html); // ✅ This will now work correctly
 
     let mcNumber = '';
     const mcMatch = html.match(/MC-?(\d{3,7})/i);
@@ -128,7 +141,6 @@ async function extractAllData(url, html) {
     let phone = extractDataByHeader(html, 'Phone:');
     let email = '';
 
-    // Deep fetch for email (if needed)
     const smsLinkMatch = html.match(/href=["']([^"']*(safer_xfr\.aspx|\/SMS\/)[^"']*)["']/i);
     if (smsLinkMatch && smsLinkMatch[1]) {
         const smsLink = absoluteUrl(url, smsLinkMatch[1]);
@@ -183,7 +195,6 @@ async function handleMC(mc) {
 
     if (MODE === 'urls') return { valid: true, url };
 
-    // ✅ FIX: Call the new function that extracts everything
     const row = await extractAllData(url, html);
     console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | Type: ${row.operationType || 'N/A'} | Location: ${row.city}, ${row.state}`);
     return { valid: true, url, row };
@@ -229,7 +240,6 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    // ✅ FIX: Updated headers to match the data being extracted
     const headers = ['mcNumber', 'legalName', 'operationType', 'phone', 'email', 'physicalAddress', 'mailingAddress', 'city', 'state', 'zip', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
