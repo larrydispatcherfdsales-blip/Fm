@@ -61,7 +61,7 @@ async function fetchRetry(url, tries = MAX_RETRIES, timeout = FETCH_TIMEOUT_MS, 
 
 function htmlToText(s) {
   if (!s) return '';
-  return s.replace(/<br\s*\/?>/gi, ', ') // ✅ FIX: Added a semicolon at the end of the line
+  return s.replace(/<br\s*\/?>/gi, ', ')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
@@ -172,11 +172,24 @@ async function handleMC(mc) {
   const url = mcToSnapshotUrl(mc);
   try {
     const html = await fetchRetry(url, MAX_RETRIES, FETCH_TIMEOUT_MS, 'snapshot');
-    const low = html.toLowerCase();
-    if (low.includes('record not found') || low.includes('record inactive')) {
+    const lowHtml = html.toLowerCase();
+
+    if (lowHtml.includes('record not found') || lowHtml.includes('record inactive')) {
       console.log(`[${now()}] INVALID (not found/inactive) MC ${mc}`);
       return { valid: false };
     }
+
+    // 🆕 Operating Authority Status check
+    const authRegex = /Operating Authority Status:<\/a><\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/i;
+    const authMatch = html.match(authRegex);
+    if (authMatch && authMatch[1]) {
+        const statusText = htmlToText(authMatch[1]).toUpperCase();
+        if (statusText.includes('NOT AUTHORIZED')) {
+            console.log(`[${now()}] SKIPPING (Not Authorized) MC ${mc}`);
+            return { valid: false };
+        }
+    }
+
     const puMatch = html.match(/Power\s*Units[^0-9]*([0-9,]+)/i);
     if (puMatch) {
       const n = Number((puMatch[1] || '').replace(/,/g, ''));
