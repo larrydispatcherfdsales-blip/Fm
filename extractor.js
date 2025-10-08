@@ -85,87 +85,70 @@ function extractDataByHeader(html, headerText) {
     return '';
 }
 
-async function extractOne(url) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
+function parseAddress(addressString) {
+    if (!addressString) return { city: '', state: '', zip: '' };
+    const match = addressString.match(/,?\s*([^,]+),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)/);
+    if (match) {
+        return {
+            city: match[1].trim(),
+            state: match[2].trim(),
+            zip: match[3].trim()
+        };
+    }
+    return { city: '', state: '', zip: '' };
+}
 
-  try {
-    const html = await fetchRetry(url, MAX_RETRIES, FETCH_TIMEOUT_MS, 'snapshot');
+function getOperationType(html) {
+    const types = [];
+    if (html.includes('>X</td>\n                   <td><font style="font-size:80%" face="arial">Auth. For Hire')) {
+        types.push('Property');
+    }
+    if (html.includes('>X</td>\n                   <td><font style="font-size:80%" face="arial">Broker')) {
+        types.push('Broker');
+    }
+    if (html.includes('>X</td>\n                   <td><font style="font-size:80%" face="arial">Passengers')) {
+        types.push('Passenger');
+    }
+    return types.join(' | ');
+}
 
+async function extractAllData(url, html) {
     const legalName = extractDataByHeader(html, 'Legal Name:');
     const physicalAddress = extractDataByHeader(html, 'Physical Address:');
+    const mailingAddress = extractDataByHeader(html, 'Mailing Address:');
+    const { city, state, zip } = parseAddress(mailingAddress || physicalAddress); // ✅ Fallback to physical address if mailing is empty
+    const operationType = getOperationType(html);
 
     let mcNumber = '';
-    const pats = [
-      /MC[-\s]?(\d{3,7})/i,
-      /MC\/MX\/FF Number\(s\):.*?MC-(\d{3,7})/i,
-      /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i,
-      /MC\/MX Number:\s*(\d{3,7})/i
-    ];
-    for (const p of pats) {
-      const m = html.match(p);
-      if (m && m[1]) { mcNumber = 'MC-' + m[1].trim(); break; }
-    }
-    if (!mcNumber) {
-        const mcMatch = html.match(/MC-(\d{3,7})/i);
-        if (mcMatch && mcMatch[1]) {
-            mcNumber = 'MC-' + mcMatch[1].trim();
-        }
+    const mcMatch = html.match(/MC-?(\d{3,7})/i);
+    if (mcMatch && mcMatch[1]) {
+        mcNumber = 'MC-' + mcMatch[1];
     }
 
-    let phone = extractPhoneAnywhere(html);
+    let phone = extractDataByHeader(html, 'Phone:');
     let email = '';
-    let smsLink = '';
-    const hrefRe = /href=["']([^"']*(safer_xfr\.aspx|\/SMS\/)[^"']*)["']/ig;
-    let m;
-    while ((m = hrefRe.exec(html)) !== null) {
-      smsLink = absoluteUrl(url, m[1]);
-      if (smsLink) break;
+
+    // Deep fetch for email (if needed)
+    const smsLinkMatch = html.match(/href=["']([^"']*(safer_xfr\.aspx|\/SMS\/)[^"']*)["']/i);
+    if (smsLinkMatch && smsLinkMatch[1]) {
+        const smsLink = absoluteUrl(url, smsLinkMatch[1]);
+        await sleep(300);
+        try {
+            const smsHtml = await fetchRetry(smsLink, MAX_RETRIES, FETCH_TIMEOUT_MS, 'sms');
+            const regLinkMatch = smsHtml.match(/href=["']([^"']*CarrierRegistration\.aspx[^"']*)["']/i);
+            if (regLinkMatch && regLinkMatch[1]) {
+                const regLink = absoluteUrl(smsLink, regLinkMatch[1]);
+                await sleep(300);
+                const regHtml = await fetchRetry(regLink, MAX_RETRIES, FETCH_TIMEOUT_MS, 'registration');
+                const emailMatch = regHtml.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+                if (emailMatch) email = emailMatch[1];
+            }
+        } catch (e) {
+            console.log(`[${now()}] Deep fetch error for ${url}: ${e?.message}`);
+        }
     }
 
-    if (smsLink) {
-      await sleep(300);
-      try {
-        const smsHtml = await fetchRetry(smsLink, MAX_RETRIES, FETCH_TIMEOUT_MS, 'sms');
-        let regLink = '';
-        const regRe = /href=["']([^"']*CarrierRegistration\.aspx[^"']*)["']/ig;
-        while ((m = regRe.exec(smsHtml)) !== null) {
-          regLink = absoluteUrl(smsLink, m[1]);
-          if (regLink) break;
-        }
-        if (regLink) {
-          await sleep(300);
-          const regHtml = await fetchRetry(regLink, MAX_RETRIES, FETCH_TIMEOUT_MS, 'registration');
-          const spanRe = /<span[^>]*class=["']dat["'][^>]*>([\s\S]*?)<\/span>/ig;
-          let foundEmail = '', foundPhone = '';
-          let s;
-          while ((s = spanRe.exec(regHtml)) !== null) {
-            const txt = htmlToText(s[1] || '');
-            if (!foundEmail && /@/.test(txt)) foundEmail = txt;
-            if (!foundPhone) {
-              const ph = txt.match(/\(?\d{3}\)?[\s\-]*\d{3}[-\s]*\d{4}/);
-              if (ph) foundPhone = ph[0];
-            }
-          }
-          if (!foundEmail) {
-            const em = regHtml.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-            if (em) foundEmail = em[1];
-          }
-          if (!foundPhone) {
-            const ph2 = regHtml.match(/\(?\d{3}\)?[\s\-]*\d{3}[-\s]*\d{4}/);
-            if (ph2) foundPhone = ph2[0];
-          }
-          email = foundEmail || '';
-          if (foundPhone) phone = foundPhone;
-        }
-      } catch (e) {
-        console.log(`[${now()}] Deep fetch error for ${url}: ${e?.message}`);
-      }
-    }
-    return { email, mcNumber, phone, url, legalName, physicalAddress };
-  } finally {
-    clearTimeout(timeoutId);
-  }
+    return { email, mcNumber, phone, url, legalName, physicalAddress, mailingAddress, city, state, zip, operationType };
 }
 
 async function handleMC(mc) {
@@ -179,7 +162,6 @@ async function handleMC(mc) {
       return { valid: false };
     }
 
-    // 🆕 Operating Authority Status check
     const authRegex = /Operating Authority Status:<\/a><\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/i;
     const authMatch = html.match(authRegex);
     if (authMatch && authMatch[1]) {
@@ -201,8 +183,9 @@ async function handleMC(mc) {
 
     if (MODE === 'urls') return { valid: true, url };
 
-    const row = await extractOne(url);
-    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
+    // ✅ FIX: Call the new function that extracts everything
+    const row = await extractAllData(url, html);
+    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | Type: ${row.operationType || 'N/A'} | Location: ${row.city}, ${row.state}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -246,7 +229,8 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    const headers = ['mcNumber', 'legalName', 'physicalAddress', 'phone', 'email', 'url'];
+    // ✅ FIX: Updated headers to match the data being extracted
+    const headers = ['mcNumber', 'legalName', 'operationType', 'phone', 'email', 'physicalAddress', 'mailingAddress', 'city', 'state', 'zip', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
       .join('\n');
@@ -267,4 +251,3 @@ run().catch(e => {
   console.error('Fatal Error:', e);
   process.exit(1);
 });
-
