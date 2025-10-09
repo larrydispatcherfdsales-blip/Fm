@@ -1,0 +1,2 @@
+mcNumber,legalName,entityType,operationType,phone,email,physicalAddress,mailingAddress,city,state,zip,url
+MC-446990,SATNAM SINGH,CARRIER,Property,(559) 344-9317,SATNAMRAI55@VERIZON.NET,"131 PALM COURT, FOWLER, CA 93625","131 PALM COURT, FOWLER, CA 93625",FOWLER,CA,93625,https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=MC_MX&query_string=446990
