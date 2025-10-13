@@ -10,12 +10,6 @@ const BATCH_SIZE = Number(process.env.BATCH_SIZE || 250);
 const BATCH_INDEX = Number(process.env.BATCH_INDEX || 0);
 const MODE = String(process.env.MODE || 'both');
 
-// 🆕 List of common Asian/Indian names to filter by. You can add more names here.
-const asianNames = [
-    'SINGH', 'KUMAR', 'PATEL', 'SHAH', 'KHAN', 'GILL', 'DHILLON', 
-    'BRAR', 'SANDHU', 'KAUR', 'CHOWDHURY', 'ALI', 'AHMED', 'HASSAN'
-];
-
 const EXTRACT_TIMEOUT_MS = 45000;
 const FETCH_TIMEOUT_MS = 30000;
 const MAX_RETRIES = 3;
@@ -78,6 +72,7 @@ function htmlToText(s) {
 }
 
 function extractDataByHeader(html, headerText) {
+    // ✅ Updated Regex to be more flexible with colspan and other attributes
     const regex = new RegExp(headerText + '<\\/a><\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>', 'i');
     const match = html.match(regex);
     if (match && match[1]) {
@@ -127,7 +122,9 @@ function getOperationType(html) {
 
 
 async function extractAllData(url, html) {
+    // 🆕 Extract Entity Type
     const entityType = extractDataByHeader(html, 'Entity Type:');
+
     const legalName = extractDataByHeader(html, 'Legal Name:');
     const physicalAddress = extractDataByHeader(html, 'Physical Address:');
     const mailingAddress = extractDataByHeader(html, 'Mailing Address:');
@@ -162,6 +159,7 @@ async function extractAllData(url, html) {
         }
     }
 
+    // 🆕 Add entityType to the returned object
     return { entityType, email, mcNumber, phone, url, legalName, physicalAddress, mailingAddress, city, state, zip, operationType };
 }
 
@@ -195,18 +193,10 @@ async function handleMC(mc) {
       }
     }
 
-    // 🆕 Filter by Legal Name
-    const legalName = extractDataByHeader(html, 'Legal Name:').toUpperCase();
-    const isAsianOwned = asianNames.some(name => legalName.includes(name));
-
-    if (!isAsianOwned) {
-        console.log(`[${now()}] SKIPPING (Name not in list): ${legalName}`);
-        return { valid: false };
-    }
-
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractAllData(url, html);
+    // 🆕 Updated console log to show Entity Type
     console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | Entity: ${row.entityType} | Type: ${row.operationType || 'N/A'} | Location: ${row.city}, ${row.state}`);
     return { valid: true, url, row };
   } catch (err) {
@@ -251,6 +241,7 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
+    // 🆕 Added 'entityType' to the CSV headers
     const headers = ['mcNumber', 'legalName', 'entityType', 'operationType', 'phone', 'email', 'physicalAddress', 'mailingAddress', 'city', 'state', 'zip', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
