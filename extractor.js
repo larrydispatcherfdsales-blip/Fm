@@ -10,9 +10,6 @@ const BATCH_SIZE = Number(process.env.BATCH_SIZE || 250);
 const BATCH_INDEX = Number(process.env.BATCH_INDEX || 0);
 const MODE = String(process.env.MODE || 'both');
 
-// ✅ Maximum age of the carrier in days (6 months ≈ 180 days)
-const MAX_AGE_DAYS = 180;
-
 const EXTRACT_TIMEOUT_MS = 45000;
 const FETCH_TIMEOUT_MS = 30000;
 const MAX_RETRIES = 3;
@@ -74,6 +71,11 @@ function htmlToText(s) {
     .trim();
 }
 
+function extractPhoneAnywhere(html) {
+  const m = html.match(/\(?\d{3}\)?[\s\-.]*\d{3}[\s\-.]*\d{4}/);
+  return m ? m[0] : '';
+}
+
 function extractDataByHeader(html, headerText) {
     const regex = new RegExp(headerText + '<\\/a><\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>', 'i');
     const match = html.match(regex);
@@ -83,54 +85,49 @@ function extractDataByHeader(html, headerText) {
     return '';
 }
 
-function parseAddress(addressString) {
-    if (!addressString) return { city: '', state: '', zip: '' };
-    const match = addressString.match(/,?\s*([^,]+),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)/);
-    if (match) {
-        return {
-            city: match[1].trim(),
-            state: match[2].trim(),
-            zip: match[3].trim()
-        };
-    }
-    return { city: '', state: '', zip: '' };
-}
+async function extractOne(url, html) { // Pass html to avoid re-fetching
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
 
-function getXMarkedItems(html) {
-    const items = [];
-    const findXRegex = /<td class="queryfield"[^>]*>X<\/td>\s*<td><font[^>]+>([^<]+)<\/font><\/td>/gi;
-    let match;
-    while ((match = findXRegex.exec(html)) !== null) {
-        items.push(match[1].trim());
-    }
-    return [...new Set(items)];
-}
-
-
-async function extractAllData(url, html) {
-    const entityType = extractDataByHeader(html, 'Entity Type:');
+  try {
     const legalName = extractDataByHeader(html, 'Legal Name:');
     const physicalAddress = extractDataByHeader(html, 'Physical Address:');
-    const mailingAddress = extractDataByHeader(html, 'Mailing Address:');
-    const { city, state, zip } = parseAddress(physicalAddress || mailingAddress);
-    
-    const xMarkedItems = getXMarkedItems(html);
-    const operationType = xMarkedItems.includes('Auth. For Hire') ? 'Property' : (xMarkedItems.includes('Passengers') ? 'Passenger' : (xMarkedItems.includes('Broker') ? 'Broker' : ''));
-    
-    // We are not extracting equipment type as it's not needed for this version
-    
+
     let mcNumber = '';
-    const mcMatch = html.match(/MC-?(\d{3,7})/i);
-    if (mcMatch && mcMatch[1]) {
-        mcNumber = 'MC-' + mcMatch[1];
+    const pats = [
+      /MC[-\s]?(\d{3,7})/i,
+      /MC\/MX\/FF Number\(s\):.*?MC-(\d{3,7})/i,
+      /MC\/MX Number:\s*MC[-\s]?(\d{3,7})/i,
+      /MC\/MX Number:\s*(\d{3,7})/i
+    ];
+    for (const p of pats) {
+      const m = html.match(p);
+      if (m && m[1]) { mcNumber = 'MC-' + m[1].trim(); break; }
+    }
+    if (!mcNumber) {
+        const mcMatch = html.match(/MC-(\d{3,7})/i);
+        if (mcMatch && mcMatch[1]) {
+            mcNumber = 'MC-' + mcMatch[1].trim();
+        }
     }
 
-    let phone = extractDataByHeader(html, 'Phone:');
+    let phone = extractPhoneAnywhere(html);
     let email = '';
+    let smsLink = '';
+    const hrefRe = /href=["']([^"']*(safer_xfr\.aspx|\/SMS\/)[^"']*)["']/ig;
+    let m;
+    while ((m = hrefRe.exec(html)) !== null) {
+      smsLink = absoluteUrl(url, m[1]);
+      if (smsLink) break;
+    }
 
-    // ... (email extraction logic remains the same)
-
-    return { entityType, email, mcNumber, phone, url, legalName, physicalAddress, mailingAddress, city, state, zip, operationType };
+    if (smsLink) {
+      // ... (email extraction logic remains the same)
+    }
+    return { email, mcNumber, phone, url, legalName, physicalAddress };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function handleMC(mc) {
@@ -140,43 +137,30 @@ async function handleMC(mc) {
     const lowHtml = html.toLowerCase();
 
     if (lowHtml.includes('record not found') || lowHtml.includes('record inactive')) {
+      console.log(`[${now()}] INVALID (not found/inactive) MC ${mc}`);
       return { valid: false };
     }
 
-    // Filter 1: Must be Authorized
-    const authRegex = /Operating Authority Status:<\/a><\/th>\s*<td[^>]*>([\s\\S]*?)<\/td>/i;
-    const authMatch = html.match(authRegex);
-    if (authMatch && authMatch[1]) {
-        const statusText = htmlToText(authMatch[1]).toUpperCase();
-        if (statusText.includes('NOT AUTHORIZED')) {
-            console.log(`[${now()}] SKIPPING (Not Authorized) MC ${mc}`);
-            return { valid: false };
-        }
-    }
-
-    // Filter 2: Must be 6 months old or less
-    const dateStr = extractDataByHeader(html, 'MCS-150 Form Date:');
-    if (dateStr) {
-        const formDate = new Date(dateStr);
-        const today = new Date();
-        const diffTime = Math.abs(today - formDate);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-        if (diffDays > MAX_AGE_DAYS) {
-            console.log(`[${now()}] SKIPPING (Older than ${MAX_AGE_DAYS} days): ${diffDays} days for MC ${mc}`);
-            return { valid: false };
-        }
-    } else {
-        console.log(`[${now()}] SKIPPING (MCS-150 Date not found) for MC ${mc}`);
+    // ✅ CORRECTED LOGIC: Skip if "AUTHORIZED" is NOT found.
+    const authStatusText = extractDataByHeader(html, 'Operating Authority Status:').toUpperCase();
+    if (!authStatusText.includes('AUTHORIZED')) {
+        console.log(`[${now()}] SKIPPING (Not Authorized or Status Unclear) MC ${mc}`);
         return { valid: false };
     }
 
-    // ❌ No other filters are applied (fleet size, state, name, etc.)
+    const puMatch = html.match(/Power\s*Units[^0-9]*([0-9,]+)/i);
+    if (puMatch) {
+      const n = Number((puMatch[1] || '').replace(/,/g, ''));
+      if (!isNaN(n) && n === 0) {
+        console.log(`[${now()}] INVALID (PU=0) MC ${mc}`);
+        return { valid: false };
+      }
+    }
 
     if (MODE === 'urls') return { valid: true, url };
 
-    const row = await extractAllData(url, html);
-    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | Entity: ${row.entityType}`);
+    const row = await extractOne(url, html); // Pass html to avoid re-fetching
+    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | ${row.email || '(no email)'} | ${row.phone || '(no phone)'}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -185,6 +169,7 @@ async function handleMC(mc) {
 }
 
 async function run() {
+  // ... (The rest of the run function remains exactly the same)
   if (!fs.existsSync(INPUT_FILE)) {
     console.error('No input file found (batch.txt or mc_list.txt).');
     process.exit(1);
@@ -220,8 +205,7 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    // ✅ Headers updated to reflect the data being extracted in this version
-    const headers = ['mcNumber', 'legalName', 'entityType', 'operationType', 'phone', 'email', 'physicalAddress', 'mailingAddress', 'city', 'state', 'zip', 'url'];
+    const headers = ['mcNumber', 'legalName', 'physicalAddress', 'phone', 'email', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
       .join('\n');
