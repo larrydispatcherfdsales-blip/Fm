@@ -74,9 +74,7 @@ function htmlToText(s) {
     .trim();
 }
 
-// ✅✅✅ NEW RELIABLE EXTRACTION FUNCTION ✅✅✅
 function extractDataByHeader(html, headerText) {
-    // This new regex is more robust. It looks for the header text and then finds the *next* <td> tag, regardless of what's in between.
     const regex = new RegExp(`>${headerText}<\\/a><\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>`, 'i');
     const match = html.match(regex);
     if (match && match[1]) {
@@ -129,7 +127,25 @@ async function extractAllData(url, html) {
     let phone = extractDataByHeader(html, 'Phone:');
     let email = '';
 
-    // ... (email extraction logic)
+    // ✅✅✅ CORRECTED: Email deep-fetch logic is now included ✅✅✅
+    const smsLinkMatch = html.match(/href=["']([^"']*(safer_xfr\.aspx|\/SMS\/)[^"']*)["']/i);
+    if (smsLinkMatch && smsLinkMatch[1]) {
+        const smsLink = absoluteUrl(url, smsLinkMatch[1]);
+        await sleep(300);
+        try {
+            const smsHtml = await fetchRetry(smsLink, MAX_RETRIES, FETCH_TIMEOUT_MS, 'sms');
+            const regLinkMatch = smsHtml.match(/href=["']([^"']*CarrierRegistration\.aspx[^"']*)["']/i);
+            if (regLinkMatch && regLinkMatch[1]) {
+                const regLink = absoluteUrl(smsLink, regLinkMatch[1]);
+                await sleep(300);
+                const regHtml = await fetchRetry(regLink, MAX_RETRIES, FETCH_TIMEOUT_MS, 'registration');
+                const emailMatch = regHtml.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+                if (emailMatch) email = emailMatch[1];
+            }
+        } catch (e) {
+            console.log(`[${now()}] Deep fetch error for ${url}: ${e?.message}`);
+        }
+    }
 
     return { entityType, legalName, dbaName, mcNumber, phone, email, physicalAddress, mailingAddress, city, state, zip, operationType, url };
 }
@@ -144,14 +160,14 @@ async function handleMC(mc) {
       return { valid: false };
     }
 
-    // ✅ Filter 1: Authorization Status
+    // Filter 1: Authorization Status
     const authStatusText = extractDataByHeader(html, 'Operating Authority Status:').toUpperCase();
     if (authStatusText.includes('NOT AUTHORIZED') || !authStatusText.includes('AUTHORIZED')) {
         console.log(`[${now()}] SKIPPING (Not Authorized) MC ${mc}`);
         return { valid: false };
     }
 
-    // ✅ Filter 2: Carrier Age (6+ months)
+    // Filter 2: Carrier Age (6+ months)
     const dateStr = extractDataByHeader(html, 'MCS-150 Form Date:');
     if (dateStr) {
         const formDate = new Date(dateStr);
@@ -167,7 +183,7 @@ async function handleMC(mc) {
         return { valid: false };
     }
 
-    // ✅ Filter 3: Power Units (min 1)
+    // Filter 3: Power Units (min 1)
     const puText = extractDataByHeader(html, 'Power Units:');
     const powerUnits = Number(puText.replace(/,/g, ''));
     if (isNaN(powerUnits) || powerUnits < 1) {
@@ -175,7 +191,7 @@ async function handleMC(mc) {
         return { valid: false };
     }
 
-    // ✅ Filter 4: Drivers (min 1)
+    // Filter 4: Drivers (min 1)
     const driverText = extractDataByHeader(html, 'Drivers:');
     const drivers = Number(driverText.replace(/,/g, ''));
     if (isNaN(drivers) || drivers < 1) {
@@ -186,7 +202,7 @@ async function handleMC(mc) {
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractAllData(url, html);
-    console.log(`[${now()}] SAVED → ${row.mcNumber || mc} | ${row.legalName || '(no name)'}`);
+    console.log(`[${now()}] SAVED → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | Email: ${row.email || 'N/A'}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -195,7 +211,6 @@ async function handleMC(mc) {
 }
 
 async function run() {
-  // ... (The rest of the run function remains exactly the same)
   if (!fs.existsSync(INPUT_FILE)) {
     console.error('No input file found (batch.txt or mc_list.txt).');
     process.exit(1);
