@@ -1,0 +1,2 @@
+mcNumber,legalName,dbaName,entityType,operationType,phone,email,physicalAddress,mailingAddress,city,state,zip,url
+MC-532012,LYONS SERVICE CORP INC,,CARRIER,Property,(860) 233-5541,,"1056 NEW BRITAIN AVE, WEST HARTFORD, CT 06110","1056 NEW BRITAIN AVE, WEST HARTFORD, CT 06110",WEST HARTFORD,CT,6110,https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=MC_MX&query_string=532012
