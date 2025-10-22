@@ -74,8 +74,10 @@ function htmlToText(s) {
     .trim();
 }
 
+// ✅✅✅ NEW RELIABLE EXTRACTION FUNCTION ✅✅✅
 function extractDataByHeader(html, headerText) {
-    const regex = new RegExp(headerText + '[^>]*>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>', 'i');
+    // This new regex is more robust. It looks for the header text and then finds the *next* <td> tag, regardless of what's in between.
+    const regex = new RegExp(`>${headerText}<\\/a><\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>`, 'i');
     const match = html.match(regex);
     if (match && match[1]) {
         return htmlToText(match[1]);
@@ -169,7 +171,7 @@ async function handleMC(mc) {
     const puText = extractDataByHeader(html, 'Power Units:');
     const powerUnits = Number(puText.replace(/,/g, ''));
     if (isNaN(powerUnits) || powerUnits < 1) {
-        console.log(`[${now()}] SKIPPING (PU < 1): ${puText} units for MC ${mc}`);
+        console.log(`[${now()}] SKIPPING (PU < 1): ${puText || 'N/A'} units for MC ${mc}`);
         return { valid: false };
     }
 
@@ -177,14 +179,14 @@ async function handleMC(mc) {
     const driverText = extractDataByHeader(html, 'Drivers:');
     const drivers = Number(driverText.replace(/,/g, ''));
     if (isNaN(drivers) || drivers < 1) {
-        console.log(`[${now()}] SKIPPING (Drivers < 1): ${driverText} drivers for MC ${mc}`);
+        console.log(`[${now()}] SKIPPING (Drivers < 1): ${driverText || 'N/A'} drivers for MC ${mc}`);
         return { valid: false };
     }
 
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractAllData(url, html);
-    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'}`);
+    console.log(`[${now()}] SAVED → ${row.mcNumber || mc} | ${row.legalName || '(no name)'}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -193,6 +195,7 @@ async function handleMC(mc) {
 }
 
 async function run() {
+  // ... (The rest of the run function remains exactly the same)
   if (!fs.existsSync(INPUT_FILE)) {
     console.error('No input file found (batch.txt or mc_list.txt).');
     process.exit(1);
