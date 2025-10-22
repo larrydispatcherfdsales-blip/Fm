@@ -10,6 +10,9 @@ const BATCH_SIZE = Number(process.env.BATCH_SIZE || 250);
 const BATCH_INDEX = Number(process.env.BATCH_INDEX || 0);
 const MODE = String(process.env.MODE || 'both');
 
+// ✅ Minimum age of the carrier in days (6 months ≈ 180 days)
+const MIN_AGE_DAYS = 180;
+
 const EXTRACT_TIMEOUT_MS = 45000;
 const FETCH_TIMEOUT_MS = 30000;
 const MAX_RETRIES = 3;
@@ -107,6 +110,7 @@ function getXMarkedItems(html) {
 async function extractAllData(url, html) {
     const entityType = extractDataByHeader(html, 'Entity Type:');
     const legalName = extractDataByHeader(html, 'Legal Name:');
+    const dbaName = extractDataByHeader(html, 'DBA Name:');
     const physicalAddress = extractDataByHeader(html, 'Physical Address:');
     const mailingAddress = extractDataByHeader(html, 'Mailing Address:');
     const { city, state, zip } = parseAddress(physicalAddress || mailingAddress);
@@ -115,7 +119,7 @@ async function extractAllData(url, html) {
     const operationType = xMarkedItems.includes('Auth. For Hire') ? 'Property' : (xMarkedItems.includes('Passengers') ? 'Passenger' : (xMarkedItems.includes('Broker') ? 'Broker' : ''));
     
     let mcNumber = '';
-    const mcMatch = html.match(/MC-?(\d{3,7})/i);
+    const mcMatch = html.match(/MC-(\d{3,7})/i);
     if (mcMatch && mcMatch[1]) {
         mcNumber = 'MC-' + mcMatch[1];
     }
@@ -125,7 +129,7 @@ async function extractAllData(url, html) {
 
     // ... (email extraction logic)
 
-    return { entityType, email, mcNumber, phone, url, legalName, physicalAddress, mailingAddress, city, state, zip, operationType };
+    return { entityType, legalName, dbaName, mcNumber, phone, email, physicalAddress, mailingAddress, city, state, zip, operationType, url };
 }
 
 async function handleMC(mc) {
@@ -138,35 +142,49 @@ async function handleMC(mc) {
       return { valid: false };
     }
 
-    // ✅✅✅ Filter 1: Reliable Authorization Check ✅✅✅
+    // ✅ Filter 1: Authorization Status
     const authStatusText = extractDataByHeader(html, 'Operating Authority Status:').toUpperCase();
-    
-    // Skip if status is explicitly "NOT AUTHORIZED" or if status text is empty/unclear
     if (authStatusText.includes('NOT AUTHORIZED') || !authStatusText.includes('AUTHORIZED')) {
-        console.log(`[${now()}] SKIPPING (Not Authorized or Status Unclear) MC ${mc}`);
+        console.log(`[${now()}] SKIPPING (Not Authorized) MC ${mc}`);
         return { valid: false };
     }
 
-    // ✅✅✅ Filter 2: Power Units Check ✅✅✅
-    const puMatch = html.match(/Power\s*Units:<\/a><\/th>\s*<td[^>]*>([0-9,]+)/i);
-    if (puMatch && puMatch[1]) {
-        const powerUnits = Number(puMatch[1].replace(/,/g, ''));
-        if (isNaN(powerUnits) || powerUnits === 0) {
-            console.log(`[${now()}] SKIPPING (PU=0) for MC ${mc}`);
+    // ✅ Filter 2: Carrier Age (6+ months)
+    const dateStr = extractDataByHeader(html, 'MCS-150 Form Date:');
+    if (dateStr) {
+        const formDate = new Date(dateStr);
+        const today = new Date();
+        const diffTime = Math.abs(today - formDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (diffDays < MIN_AGE_DAYS) {
+            console.log(`[${now()}] SKIPPING (Newer than ${MIN_AGE_DAYS} days): ${diffDays} days for MC ${mc}`);
             return { valid: false };
         }
     } else {
-        // If Power Units info is not found, it's safer to skip.
-        console.log(`[${now()}] SKIPPING (Power Units not found) for MC ${mc}`);
+        console.log(`[${now()}] SKIPPING (MCS-150 Date not found) for MC ${mc}`);
         return { valid: false };
     }
 
-    // If we reach here, the carrier is AUTHORIZED and has more than 0 Power Units.
+    // ✅ Filter 3: Power Units (min 1)
+    const puText = extractDataByHeader(html, 'Power Units:');
+    const powerUnits = Number(puText.replace(/,/g, ''));
+    if (isNaN(powerUnits) || powerUnits < 1) {
+        console.log(`[${now()}] SKIPPING (PU < 1): ${puText} units for MC ${mc}`);
+        return { valid: false };
+    }
+
+    // ✅ Filter 4: Drivers (min 1)
+    const driverText = extractDataByHeader(html, 'Drivers:');
+    const drivers = Number(driverText.replace(/,/g, ''));
+    if (isNaN(drivers) || drivers < 1) {
+        console.log(`[${now()}] SKIPPING (Drivers < 1): ${driverText} drivers for MC ${mc}`);
+        return { valid: false };
+    }
 
     if (MODE === 'urls') return { valid: true, url };
 
     const row = await extractAllData(url, html);
-    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'} | State: ${row.state}`);
+    console.log(`[${now()}] Saved → ${row.mcNumber || mc} | ${row.legalName || '(no name)'}`);
     return { valid: true, url, row };
   } catch (err) {
     console.log(`[${now()}] Fetch error MC ${mc} → ${err?.message}`);
@@ -175,7 +193,6 @@ async function handleMC(mc) {
 }
 
 async function run() {
-  // ... (The rest of the run function remains exactly the same)
   if (!fs.existsSync(INPUT_FILE)) {
     console.error('No input file found (batch.txt or mc_list.txt).');
     process.exit(1);
@@ -211,7 +228,7 @@ async function run() {
   if (rows.length > 0) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const outCsv = path.join(OUTPUT_DIR, `fmcsa_batch_${BATCH_INDEX}_${ts}.csv`);
-    const headers = ['mcNumber', 'legalName', 'entityType', 'operationType', 'phone', 'email', 'physicalAddress', 'mailingAddress', 'city', 'state', 'zip', 'url'];
+    const headers = ['mcNumber', 'legalName', 'dbaName', 'entityType', 'operationType', 'phone', 'email', 'physicalAddress', 'mailingAddress', 'city', 'state', 'zip', 'url'];
     const csv = [headers.join(',')]
       .concat(rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(',')))
       .join('\n');
